@@ -9,6 +9,7 @@
 
 #include "main.h"
 #include "gpio.h"
+#include "i2c.h"
 #include "usart.h"
 
 /* USER CODE BEGIN Includes */
@@ -34,6 +35,7 @@ int main(void)
   SystemClock_Config();
 
   MX_GPIO_Init();
+  MX_I2C1_Init();
   MX_UART5_Init();
   MX_USART1_UART_Init();
   MX_USART2_UART_Init();

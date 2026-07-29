@@ -1,5 +1,6 @@
 #include "DS_task.h"
 
+#include "DS.h"
 #include "LineFollow.h"
 #include "OLED.h"
 #include "button.h"
@@ -7,6 +8,61 @@
 DS_TaskContext ds_task;
 
 static uint32_t ds_task_last_display_ms;
+
+static int32_t DS_Task_Clamp(int32_t value,
+                             int32_t minimum,
+                             int32_t maximum)
+{
+    if (value < minimum) {
+        return minimum;
+    }
+    if (value > maximum) {
+        return maximum;
+    }
+    return value;
+}
+
+static void DS_Task_ShowSignedFixedOne(uint8_t line,
+                                       uint8_t column,
+                                       float value)
+{
+    int32_t scaled = (int32_t)(value * 10.0f);
+    uint32_t magnitude;
+
+    scaled = DS_Task_Clamp(scaled, -9999, 9999);
+    if (scaled < 0) {
+        OLED_ShowChar(line, column, '-');
+        magnitude = (uint32_t)(-(scaled + 1)) + 1U;
+    } else {
+        OLED_ShowChar(line, column, '+');
+        magnitude = (uint32_t)scaled;
+    }
+
+    OLED_ShowNum(line, (uint8_t)(column + 1U), magnitude / 10U, 3U);
+    OLED_ShowChar(line, (uint8_t)(column + 4U), '.');
+    OLED_ShowNum(line,
+                 (uint8_t)(column + 5U),
+                 magnitude % 10U,
+                 1U);
+}
+
+static void DS_Task_UpdateImuValues(void)
+{
+    const DS_State *state = DS_GetState();
+    int32_t gyro_z = DS_Task_Clamp((int32_t)state->gyro_z_dps,
+                                   -999,
+                                   999);
+
+    DS_Task_ShowSignedFixedOne(4U, 3U, state->yaw_deg);
+    OLED_ShowSignedNum(4U, 12U, gyro_z, 3U);
+    OLED_ShowChar(4U, 16U, (state->yaw_valid != 0U) ? 'V' : 'X');
+}
+
+static void DS_Task_ShowImuLine(void)
+{
+    OLED_ShowString(4U, 1U, "Y:+000.0 Z:+000X");
+    DS_Task_UpdateImuValues();
+}
 
 static void DS_Task_ShowTime(uint32_t elapsed_ms)
 {
@@ -39,8 +95,8 @@ static void DS_Task_ShowMenu(void)
     OLED_ShowString(1U, 1U, "DS CAR READY");
     OLED_ShowString(2U, 1U, "QUESTION:");
     OLED_ShowNum(2U, 10U, ds_task.selected_question, 1U);
-    OLED_ShowString(3U, 1U, "K1:SELECT");
-    OLED_ShowString(4U, 1U, "K2:START");
+    OLED_ShowString(3U, 1U, "K1:SEL K2:START");
+    DS_Task_ShowImuLine();
 }
 
 static void DS_Task_ShowQuestion1(void)
@@ -49,7 +105,7 @@ static void DS_Task_ShowQuestion1(void)
     OLED_ShowString(1U, 1U, "Q1 LINE FOLLOW");
     OLED_ShowString(2U, 1U, "TIME:0000.0s");
     OLED_ShowString(3U, 1U, "IR:00000000");
-    OLED_ShowString(4U, 1U, "E:+0000 C:+000");
+    DS_Task_ShowImuLine();
 }
 
 static void DS_Task_ShowFinished(void)
@@ -59,6 +115,7 @@ static void DS_Task_ShowFinished(void)
     OLED_ShowString(2U, 1U, "TIME:0000.0s");
     DS_Task_ShowTime(ds_task.elapsed_ms);
     OLED_ShowString(3U, 1U, "K2:MENU");
+    DS_Task_ShowImuLine();
 }
 
 static void DS_Task_ShowNotReady(void)
@@ -67,7 +124,16 @@ static void DS_Task_ShowNotReady(void)
     OLED_ShowString(1U, 1U, "QUESTION");
     OLED_ShowNum(1U, 10U, ds_task.selected_question, 1U);
     OLED_ShowString(2U, 1U, "NOT READY");
-    OLED_ShowString(4U, 1U, "K2:MENU");
+    OLED_ShowString(3U, 1U, "K2:MENU");
+    DS_Task_ShowImuLine();
+}
+
+static void DS_Task_FinishQuestion1(uint32_t now)
+{
+    LineFollow_Stop();
+    ds_task.elapsed_ms = now - ds_task.start_ms;
+    ds_task.state = DS_TASK_FINISHED;
+    DS_Task_ShowFinished();
 }
 
 static void DS_Task_StartQuestion1(void)
@@ -92,8 +158,19 @@ static void DS_Task_UpdateQuestion1Display(uint32_t now)
     ds_task_last_display_ms = now;
     DS_Task_ShowTime(ds_task.elapsed_ms);
     DS_Task_ShowSensorBits(line_follow_state.sensor_bits);
-    OLED_ShowSignedNum(4U, 3U, line_follow_state.error, 4U);
-    OLED_ShowSignedNum(4U, 11U, line_follow_state.correction, 3U);
+    DS_Task_UpdateImuValues();
+}
+
+static void DS_Task_UpdatePassiveImuDisplay(uint32_t now)
+{
+    if (ds_task.state == DS_TASK_RUNNING_Q1 ||
+        (uint32_t)(now - ds_task_last_display_ms) <
+        DS_TASK_DISPLAY_PERIOD_MS) {
+        return;
+    }
+
+    ds_task_last_display_ms = now;
+    DS_Task_UpdateImuValues();
 }
 
 void DS_Task_Init(void)
@@ -107,7 +184,7 @@ void DS_Task_Init(void)
          * Visible power-on self-test: all pixels light briefly, then the menu
          * overwrites the cleared display RAM.
          */
-        oled_status = OLED_TestAllPixels(200U);
+        oled_status = OLED_TestAllPixels(1000U);
     }
     LineFollow_Init();
 
@@ -157,15 +234,14 @@ void DS_Task_Run(void)
     case DS_TASK_RUNNING_Q1:
         LineFollow_Update();
         ds_task.elapsed_ms = now - ds_task.start_ms;
-        DS_Task_UpdateQuestion1Display(now);
 
-        /* Temporary manual finish until a finish-line rule is specified. */
-        if (key2_clicked != 0U) {
-            LineFollow_Stop();
-            ds_task.elapsed_ms = now - ds_task.start_ms;
-            ds_task.state = DS_TASK_FINISHED;
-            DS_Task_ShowFinished();
+        if (LineFollow_IsLapComplete() != 0U ||
+            key2_clicked != 0U) {
+            DS_Task_FinishQuestion1(now);
+            break;
         }
+
+        DS_Task_UpdateQuestion1Display(now);
         break;
 
     case DS_TASK_FINISHED:
@@ -182,6 +258,8 @@ void DS_Task_Run(void)
         DS_Task_ShowMenu();
         break;
     }
+
+    DS_Task_UpdatePassiveImuDisplay(now);
 }
 
 void DS_Task_Stop(void)

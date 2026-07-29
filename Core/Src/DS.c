@@ -91,6 +91,9 @@ HAL_StatusTypeDef DS_Init(void)
     ds_state.yaw_deg = 0.0f;
     ds_state.gyro_y_dps = 0.0f;
     ds_state.gyro_z_dps = 0.0f;
+    ds_state.yaw_valid = 0U;
+    ds_state.yaw_frame_count = 0U;
+    ds_state.yaw_last_rx_ms = 0U;
     ds_1ms_pending = 0U;
 
     Motor_Init(&huart1);
@@ -108,6 +111,7 @@ void DS_Run(void)
 {
     uint32_t pending;
     uint32_t primask;
+    uint32_t now;
 
     primask = __get_PRIMASK();
     __disable_irq();
@@ -123,9 +127,17 @@ void DS_Run(void)
     ds_state.yaw_deg = (float)global_angle;
     ds_state.gyro_y_dps = angular_velocity_y;
     ds_state.gyro_z_dps = angular_velocity_z;
+    ds_state.yaw_frame_count = hwt_yaw_frame_count;
+    ds_state.yaw_last_rx_ms = hwt_yaw_last_rx_ms;
+    now = HAL_GetTick();
+    ds_state.yaw_valid =
+        (ds_state.yaw_frame_count != 0U &&
+         (uint32_t)(now - ds_state.yaw_last_rx_ms) <=
+         DS_IMU_TIMEOUT_MS) ? 1U : 0U;
 
     if (ds_state.vision_valid != 0U &&
-        (uint32_t)(HAL_GetTick() - ds_state.vision_last_rx_ms) > DS_VISION_TIMEOUT_MS) {
+        (uint32_t)(now - ds_state.vision_last_rx_ms) >
+        DS_VISION_TIMEOUT_MS) {
         ds_state.vision_valid = 0U;
     }
 

@@ -11,7 +11,7 @@ STM32F407VETx electronic-design competition car. The current hardware consists o
 - Eight digital infrared line sensors
 - A UART vision module
 - An HWT101 IMU
-- An SSD1306-compatible software-I2C OLED
+- An SSD1306-compatible hardware-I2C OLED
 - Two active-low task-selection buttons
 
 The project was generated with STM32CubeMX 6.8.0 and is built with Keil MDK-ARM.
@@ -29,9 +29,9 @@ Preprocessor defines: `USE_HAL_DRIVER;STM32F407xx`
    motor address/direction mapping, reads all infrared inputs, aggregates vision
    and IMU data, and exposes chassis/balance-frame commands.
 5. `button.c/.h` — Debounced, non-blocking PC6/PC7 active-low buttons.
-6. `OLED.c/.h` — STM32F4 HAL software-I2C OLED driver on PB8/PB9.
-7. `LineFollow.c/.h` — First-generation 8-sensor weighted-centroid P line
-   follower with curve slowdown, steering slew limiting, and lost-line recovery.
+6. `i2c.c/.h`, `OLED.c/.h` — STM32F4 HAL I2C1 OLED driver on PB8/PB9.
+7. `LineFollow.c/.h` — 8-sensor weighted-centroid PD line follower with curve
+   slowdown and HWT101 unwrapped-yaw one-lap stopping.
 8. `DS_task.c/.h` — Question selection and start state machine. Question 1 runs
    line following and displays elapsed time and diagnostics on the OLED.
 9. `PID.c/.h` — Generic PID library retained for future line, heading, and
@@ -55,12 +55,12 @@ to the motor, vision, and HWT101 handlers; each handler checks its UART instance
 | Infrared active level | Low |
 | Button 1 / question select | PC6, active-low, internal pull-up |
 | Button 2 / confirm-start-stop | PC7, active-low, internal pull-up |
-| OLED software I2C | PB8 SCL, PB9 SDA, open-drain |
+| OLED hardware I2C1 | PB8 SCL, PB9 SDA, AF4 open-drain, 100 kHz |
 
 Motor addresses, motor directions, infrared pins, and the infrared active level
 are centralized in `Core/Inc/DS.h`. Button mapping is in `Core/Inc/button.h`;
-OLED mapping is in `Core/Inc/OLED.h`. Update these files and `gc.ioc` whenever
-the wiring changes.
+OLED peripheral mapping is in `Core/Src/i2c.c` and the HAL MSP setup. Update
+these files and `gc.ioc` whenever the wiring changes.
 
 ## Retained Optional Modules
 

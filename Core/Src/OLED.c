@@ -1,194 +1,57 @@
 #include "OLED.h"
 
 #include "OLED_Font.h"
-#include "stm32f4xx_hal.h"
+#include "i2c.h"
 
 #define OLED_WIDTH_PIXELS            128U
 #define OLED_PAGE_COUNT              8U
 #define OLED_CHARACTER_COLUMNS       16U
-#define OLED_I2C_HALF_PERIOD_US      2U
+#define OLED_I2C_TIMEOUT_MS          100U
+#define OLED_I2C_READY_TRIALS        3U
 
 static uint8_t oled_write_address = (uint8_t)(OLED_ADDRESS_0 << 1U);
 static volatile uint8_t oled_connected;
-static uint8_t oled_dwt_ready;
-
-static void OLED_DelayInit(void)
-{
-    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
-    DWT->CYCCNT = 0U;
-    DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
-    oled_dwt_ready =
-        ((DWT->CTRL & DWT_CTRL_CYCCNTENA_Msk) != 0U) ? 1U : 0U;
-}
-
-static void OLED_I2C_Delay(void)
-{
-    uint32_t cycles;
-
-    cycles = (SystemCoreClock / 1000000U) * OLED_I2C_HALF_PERIOD_US;
-    if (cycles == 0U) {
-        cycles = 1U;
-    }
-
-    if (oled_dwt_ready != 0U) {
-        uint32_t start = DWT->CYCCNT;
-        while ((uint32_t)(DWT->CYCCNT - start) < cycles) {
-        }
-    } else {
-        volatile uint32_t index;
-        for (index = 0U; index < cycles; index++) {
-            __NOP();
-        }
-    }
-}
-
-static void OLED_WriteSCL(uint8_t level)
-{
-    HAL_GPIO_WritePin(OLED_SCL_GPIO_PORT,
-                      OLED_SCL_GPIO_PIN,
-                      (level != 0U) ? GPIO_PIN_SET : GPIO_PIN_RESET);
-}
-
-static void OLED_WriteSDA(uint8_t level)
-{
-    HAL_GPIO_WritePin(OLED_SDA_GPIO_PORT,
-                      OLED_SDA_GPIO_PIN,
-                      (level != 0U) ? GPIO_PIN_SET : GPIO_PIN_RESET);
-}
-
-static void OLED_I2C_Init(void)
-{
-    GPIO_InitTypeDef GPIO_InitStruct = {0};
-
-    __HAL_RCC_GPIOB_CLK_ENABLE();
-    OLED_DelayInit();
-
-    GPIO_InitStruct.Pin = OLED_SCL_GPIO_PIN | OLED_SDA_GPIO_PIN;
-    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_OD;
-    GPIO_InitStruct.Pull = GPIO_PULLUP;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-
-    OLED_WriteSCL(1U);
-    OLED_WriteSDA(1U);
-    OLED_I2C_Delay();
-}
-
-static void OLED_I2C_BusRecover(void)
-{
-    uint8_t pulse;
-
-    OLED_WriteSDA(1U);
-    OLED_WriteSCL(1U);
-    OLED_I2C_Delay();
-
-    if (HAL_GPIO_ReadPin(OLED_SDA_GPIO_PORT,
-                         OLED_SDA_GPIO_PIN) == GPIO_PIN_RESET) {
-        for (pulse = 0U; pulse < 9U; pulse++) {
-            OLED_WriteSCL(0U);
-            OLED_I2C_Delay();
-            OLED_WriteSCL(1U);
-            OLED_I2C_Delay();
-        }
-    }
-
-    OLED_WriteSDA(0U);
-    OLED_I2C_Delay();
-    OLED_WriteSCL(1U);
-    OLED_I2C_Delay();
-    OLED_WriteSDA(1U);
-    OLED_I2C_Delay();
-}
-
-static void OLED_I2C_Start(void)
-{
-    OLED_WriteSDA(1U);
-    OLED_WriteSCL(1U);
-    OLED_I2C_Delay();
-    OLED_WriteSDA(0U);
-    OLED_I2C_Delay();
-    OLED_WriteSCL(0U);
-    OLED_I2C_Delay();
-}
-
-static void OLED_I2C_Stop(void)
-{
-    OLED_WriteSDA(0U);
-    OLED_I2C_Delay();
-    OLED_WriteSCL(1U);
-    OLED_I2C_Delay();
-    OLED_WriteSDA(1U);
-    OLED_I2C_Delay();
-}
-
-static uint8_t OLED_I2C_SendByte(uint8_t byte)
-{
-    uint8_t bit;
-    uint8_t acknowledged;
-
-    for (bit = 0U; bit < 8U; bit++) {
-        OLED_WriteSCL(0U);
-        OLED_WriteSDA((byte & (uint8_t)(0x80U >> bit)) != 0U);
-        OLED_I2C_Delay();
-        OLED_WriteSCL(1U);
-        OLED_I2C_Delay();
-        OLED_WriteSCL(0U);
-        OLED_I2C_Delay();
-    }
-
-    /* Release SDA so the OLED can pull it low during the ninth ACK clock. */
-    OLED_WriteSDA(1U);
-    OLED_I2C_Delay();
-    OLED_WriteSCL(1U);
-    OLED_I2C_Delay();
-    acknowledged =
-        (HAL_GPIO_ReadPin(OLED_SDA_GPIO_PORT,
-                          OLED_SDA_GPIO_PIN) == GPIO_PIN_RESET) ? 1U : 0U;
-    OLED_WriteSCL(0U);
-    OLED_I2C_Delay();
-
-    return acknowledged;
-}
+static uint8_t oled_tx_buffer[OLED_WIDTH_PIXELS + 1U];
 
 static uint8_t OLED_I2C_Probe(uint8_t write_address)
 {
-    uint8_t acknowledged;
-
-    OLED_I2C_Start();
-    acknowledged = OLED_I2C_SendByte(write_address);
-    OLED_I2C_Stop();
-
-    return acknowledged;
+    return (HAL_I2C_IsDeviceReady(&hi2c1,
+                                  write_address,
+                                  OLED_I2C_READY_TRIALS,
+                                  OLED_I2C_TIMEOUT_MS) == HAL_OK) ?
+           1U :
+           0U;
 }
 
 static HAL_StatusTypeDef OLED_WriteBlock(uint8_t control,
                                          const uint8_t *data,
-                                         uint8_t length)
+                                         uint16_t length)
 {
-    uint8_t index;
+    HAL_StatusTypeDef status;
+    uint16_t index;
 
-    if (oled_connected == 0U || data == NULL || length == 0U) {
+    if (oled_connected == 0U ||
+        data == NULL ||
+        length == 0U ||
+        length > OLED_WIDTH_PIXELS) {
         return HAL_ERROR;
     }
 
-    OLED_I2C_Start();
-    if (OLED_I2C_SendByte(oled_write_address) == 0U ||
-        OLED_I2C_SendByte(control) == 0U) {
-        OLED_I2C_Stop();
-        oled_connected = 0U;
-        return HAL_ERROR;
-    }
-
+    oled_tx_buffer[0] = control;
     for (index = 0U; index < length; index++) {
-        if (OLED_I2C_SendByte(data[index]) == 0U) {
-            OLED_I2C_Stop();
-            oled_connected = 0U;
-            return HAL_ERROR;
-        }
+        oled_tx_buffer[index + 1U] = data[index];
     }
-    OLED_I2C_Stop();
 
-    return HAL_OK;
+    status = HAL_I2C_Master_Transmit(&hi2c1,
+                                     oled_write_address,
+                                     oled_tx_buffer,
+                                     (uint16_t)(length + 1U),
+                                     OLED_I2C_TIMEOUT_MS);
+    if (status != HAL_OK) {
+        oled_connected = 0U;
+    }
+
+    return status;
 }
 
 static HAL_StatusTypeDef OLED_WriteCommand(uint8_t command)
@@ -197,13 +60,13 @@ static HAL_StatusTypeDef OLED_WriteCommand(uint8_t command)
 }
 
 static HAL_StatusTypeDef OLED_WriteCommandBlock(const uint8_t *commands,
-                                                 uint8_t length)
+                                                 uint16_t length)
 {
     return OLED_WriteBlock(0x00U, commands, length);
 }
 
 static HAL_StatusTypeDef OLED_WriteDataBlock(const uint8_t *data,
-                                              uint8_t length)
+                                              uint16_t length)
 {
     return OLED_WriteBlock(0x40U, data, length);
 }
@@ -254,9 +117,13 @@ HAL_StatusTypeDef OLED_Init(void)
     };
 
     oled_connected = 0U;
-    OLED_I2C_Init();
+
+    if (hi2c1.Instance != I2C1 ||
+        hi2c1.State == HAL_I2C_STATE_RESET) {
+        return HAL_ERROR;
+    }
+
     HAL_Delay(100U);
-    OLED_I2C_BusRecover();
 
     oled_write_address = (uint8_t)(OLED_ADDRESS_0 << 1U);
     if (OLED_I2C_Probe(oled_write_address) == 0U) {
@@ -283,7 +150,9 @@ uint8_t OLED_IsConnected(void)
 
 uint8_t OLED_GetAddress(void)
 {
-    return (uint8_t)(oled_write_address >> 1U);
+    return (oled_connected != 0U) ?
+           (uint8_t)(oled_write_address >> 1U) :
+           0U;
 }
 
 HAL_StatusTypeDef OLED_TestAllPixels(uint32_t hold_ms)
@@ -298,7 +167,7 @@ HAL_StatusTypeDef OLED_TestAllPixels(uint32_t hold_ms)
 
 void OLED_Clear(void)
 {
-    uint8_t blank[OLED_WIDTH_PIXELS] = {0};
+    static const uint8_t blank[OLED_WIDTH_PIXELS] = {0};
     uint8_t page;
 
     if (oled_connected == 0U) {
@@ -331,11 +200,15 @@ void OLED_ShowChar(uint8_t line, uint8_t column, char character)
 
     OLED_SetCursor((uint8_t)((line - 1U) * 2U),
                    (uint8_t)((column - 1U) * 8U));
-    OLED_WriteDataBlock(&OLED_F8x16[(uint16_t)font_index * 16U], 8U);
+    (void)OLED_WriteDataBlock(
+        &OLED_F8x16[(uint16_t)font_index * 16U],
+        8U);
 
     OLED_SetCursor((uint8_t)((line - 1U) * 2U + 1U),
                    (uint8_t)((column - 1U) * 8U));
-    OLED_WriteDataBlock(&OLED_F8x16[(uint16_t)font_index * 16U + 8U], 8U);
+    (void)OLED_WriteDataBlock(
+        &OLED_F8x16[(uint16_t)font_index * 16U + 8U],
+        8U);
 }
 
 void OLED_ShowString(uint8_t line, uint8_t column, const char *text)

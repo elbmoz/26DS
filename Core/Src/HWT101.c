@@ -11,6 +11,8 @@ volatile double global_angle;
 volatile uint8_t new_data_received;
 volatile float angular_velocity_y;
 volatile float angular_velocity_z;
+volatile uint32_t hwt_yaw_frame_count;
+volatile uint32_t hwt_yaw_last_rx_ms;
 
 static uint8_t HWT101_ChecksumIsValid(const uint8_t *data)
 {
@@ -35,6 +37,8 @@ static void HWT101_ParseFrame(const uint8_t *data)
     if (data[1] == 0x53U) {
         raw_value = (int16_t)(((uint16_t)data[7] << 8) | data[6]);
         global_angle = (double)raw_value * 180.0 / 32768.0;
+        hwt_yaw_frame_count++;
+        hwt_yaw_last_rx_ms = HAL_GetTick();
         new_data_received = 1U;
     } else if (data[1] == 0x52U) {
         raw_value = (int16_t)(((uint16_t)data[5] << 8) | data[4]);
@@ -53,6 +57,8 @@ void HWT101_Init(UART_HandleTypeDef *huart)
     global_angle = 0.0;
     angular_velocity_y = 0.0f;
     angular_velocity_z = 0.0f;
+    hwt_yaw_frame_count = 0U;
+    hwt_yaw_last_rx_ms = 0U;
     new_data_received = 0U;
 
     if (hwt_huart == NULL) {

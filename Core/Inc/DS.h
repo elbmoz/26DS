@@ -51,6 +51,7 @@ extern "C" {
 /* Most digital line sensors assert low. Set to 0U if the selected board asserts high. */
 #define DS_IR_ACTIVE_LOW               1U
 #define DS_VISION_TIMEOUT_MS           200U
+#define DS_IMU_TIMEOUT_MS              200U
 
 typedef struct
 {
@@ -69,6 +70,9 @@ typedef struct
     volatile float yaw_deg;
     volatile float gyro_y_dps;
     volatile float gyro_z_dps;
+    volatile uint8_t yaw_valid;
+    volatile uint32_t yaw_frame_count;
+    volatile uint32_t yaw_last_rx_ms;
 } DS_State;
 
 HAL_StatusTypeDef DS_Init(void);
