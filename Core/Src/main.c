@@ -49,12 +49,27 @@ int main(void)
     Error_Handler();
   }
   /* USER CODE END 2 */
+	  /* ?????? */
+	(void)DS_ChassisSetSpeed(300, 0, DS_MOTOR_DEFAULT_SLOPE);
+	HAL_Delay(1000);
+	DS_ChassisStop();
+	HAL_Delay(500);
 
+/* ?????? */
+	(void)DS_ChassisSetSpeed(0, 300, DS_MOTOR_DEFAULT_SLOPE);
+	HAL_Delay(1000);
+	DS_ChassisStop();
+	HAL_Delay(500);
+
+/* ?????? */
+(void)DS_ChassisSetSpeed(300, 300, DS_MOTOR_DEFAULT_SLOPE);
+HAL_Delay(2000);
+DS_ChassisStop();
   /* USER CODE BEGIN WHILE */
   while (1)
   {
     /* USER CODE END WHILE */
-    DS_Run();
+    //DS_Run();
     /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
