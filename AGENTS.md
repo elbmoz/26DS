@@ -11,6 +11,8 @@ STM32F407VETx electronic-design competition car. The current hardware consists o
 - Eight digital infrared line sensors
 - A UART vision module
 - An HWT101 IMU
+- An SSD1306-compatible software-I2C OLED
+- Two active-low task-selection buttons
 
 The project was generated with STM32CubeMX 6.8.0 and is built with Keil MDK-ARM.
 Open `MDK-ARM/gc.uvprojx` in Keil to build and flash over ST-Link.
@@ -23,13 +25,19 @@ Preprocessor defines: `USE_HAL_DRIVER;STM32F407xx`
 2. `HWT101.c/.h` — HWT101 yaw and angular-velocity receiver on USART2.
 3. `serial.c/.h` — Line-based vision receiver on UART5. It accepts
    `x_error,y_error\n` and `none\n`.
-4. `DS.c/.h` — The board mapping and application-facing hardware facade.
-   It owns the motor address/direction mapping, reads all eight infrared inputs,
-   aggregates vision and IMU data, and exposes chassis/balance-frame commands.
-5. `PID.c/.h` — Generic PID library retained for future line, heading, and
+4. `DS.c/.h` — Board mapping and the application-facing hardware facade. It owns
+   motor address/direction mapping, reads all infrared inputs, aggregates vision
+   and IMU data, and exposes chassis/balance-frame commands.
+5. `button.c/.h` — Debounced, non-blocking PC6/PC7 active-low buttons.
+6. `OLED.c/.h` — STM32F4 HAL software-I2C OLED driver on PB8/PB9.
+7. `LineFollow.c/.h` — First-generation 8-sensor weighted-centroid P line
+   follower with curve slowdown, steering slew limiting, and lost-line recovery.
+8. `DS_task.c/.h` — Question selection and start state machine. Question 1 runs
+   line following and displays elapsed time and diagnostics on the OLED.
+9. `PID.c/.h` — Generic PID library retained for future line, heading, and
    balance-frame control loops.
-6. `main.c` — Initializes UART5, USART1, USART2, TIM2, and DS, then repeatedly
-   calls `DS_Run()`.
+10. `main.c` — Initializes the active peripherals and repeatedly calls
+    `DS_Run()` and `DS_Task_Run()`.
 
 TIM2 provides a 1 ms tick through `DS_1msTickFromISR()`. UART callbacks dispatch
 to the motor, vision, and HWT101 handlers; each handler checks its UART instance.
@@ -45,21 +53,24 @@ to the motor, vision, and HWT101 handlers; each handler checks its UART instance
 | Vision | UART5, 9600 |
 | Infrared 1 through 8, left to right | PE11, PE10, PE9, PE8, PE7, PA6, PA11, PA7 |
 | Infrared active level | Low |
+| Button 1 / question select | PC6, active-low, internal pull-up |
+| Button 2 / confirm-start-stop | PC7, active-low, internal pull-up |
+| OLED software I2C | PB8 SCL, PB9 SDA, open-drain |
 
-All addresses, directions, pins, and active levels are centralized in
-`Core/Inc/DS.h`. Update that file and `gc.ioc` whenever the wiring changes.
+Motor addresses, motor directions, infrared pins, and the infrared active level
+are centralized in `Core/Inc/DS.h`. Button mapping is in `Core/Inc/button.h`;
+OLED mapping is in `Core/Inc/OLED.h`. Update these files and `gc.ioc` whenever
+the wiring changes.
 
 ## Retained Optional Modules
 
-`button`, `WS2812`, `screen`, and `encoder_f407` remain in the project but are
-not initialized by the active startup path. Keep them only if they become useful
-for start control, status indication, debugging, or odometry.
+`WS2812`, `screen`, and `encoder_f407` remain in the project but are not
+initialized by the active startup path. Keep them only if they become useful
+for status indication, debugging, or odometry.
 
-The old `button` mapping also uses PA6, which now belongs to infrared sensor 6.
-Do not call `Button_Init()` until the button has been assigned a different pin.
-
-UART4, USART3, and USART6 are still generated as spare UART resources but are not
-initialized by `main.c`.
+PC6 and PC7 were released from the removed USART6 servo interface and now belong
+exclusively to the two buttons. UART4 and USART3 remain generated as spare UART
+resources but are not initialized by `main.c`.
 
 ## Removed Logistics-Robot Modules
 
@@ -69,8 +80,8 @@ The four-wheel mecanum/Z-axis layer and logistics task chain were removed:
 - `servo`, `LobotServoController`, `huaner_servo`, `ServoMotorControl`
 - `QRcode`, `laser`, `bluetooth`
 
-Do not reintroduce these modules for the new two-wheel car. Reuse `PID` algorithms
-through a new control module built on top of DS instead.
+Do not reintroduce these modules for the new two-wheel car. Reuse `PID`
+algorithms through a control module built on top of DS instead.
 
 ## CubeMX Pattern
 
@@ -78,4 +89,5 @@ Preserve `/* USER CODE BEGIN/END */` sections when regenerating. `gc.ioc` remain
 the peripheral and pin source of truth. Keep `AGENTS.md` and `CLAUDE.md` in sync.
 
 See `DS_PORTING.md` for the migration record and hardware checks required before
-on-car testing.
+on-car testing. See `LINE_FOLLOW_TUNING.md` for the Question 1 algorithm and
+tuning sequence.

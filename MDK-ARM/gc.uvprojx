@@ -10,7 +10,7 @@
       <TargetName>gc</TargetName>
       <ToolsetNumber>0x4</ToolsetNumber>
       <ToolsetName>ARM-ADS</ToolsetName>
-      <pCCUsed>6240000::V6.24::ARMCLANG</pCCUsed>
+      <pCCUsed>6220000::V6.22::ARMCLANG</pCCUsed>
       <uAC6>1</uAC6>
       <TargetOption>
         <TargetCommonOption>
@@ -413,6 +413,41 @@
               <FileName>DS.h</FileName>
               <FileType>5</FileType>
               <FilePath>..\Core\Inc\DS.h</FilePath>
+            </File>
+            <File>
+              <FileName>DS_task.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\DS_task.c</FilePath>
+            </File>
+            <File>
+              <FileName>DS_task.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Core\Inc\DS_task.h</FilePath>
+            </File>
+            <File>
+              <FileName>LineFollow.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\LineFollow.c</FilePath>
+            </File>
+            <File>
+              <FileName>LineFollow.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Core\Inc\LineFollow.h</FilePath>
+            </File>
+            <File>
+              <FileName>OLED.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\OLED.c</FilePath>
+            </File>
+            <File>
+              <FileName>OLED.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Core\Inc\OLED.h</FilePath>
+            </File>
+            <File>
+              <FileName>OLED_Font.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Core\Inc\OLED_Font.h</FilePath>
             </File>
             <File>
               <FileName>PID.c</FileName>
