@@ -76,6 +76,7 @@ class LabBallDetector:
         circle_radius_step=2,
         circle_acquire_enabled=True,
         circle_acquire_interval_frames=1,
+        circle_acquire_roi=None,
         circle_track_interval_frames=1,
         circle_track_endpoint_only=False,
         circle_x_margin=6,
@@ -130,6 +131,15 @@ class LabBallDetector:
         self.circle_acquire_enabled = bool(circle_acquire_enabled)
         self.circle_acquire_interval_frames = max(
             1, int(circle_acquire_interval_frames)
+        )
+        self.circle_acquire_roi = (
+            None
+            if circle_acquire_roi is None
+            else clamp_roi(
+                circle_acquire_roi,
+                self.frame_width,
+                self.frame_height,
+            )
         )
         self.circle_track_interval_frames = max(
             1, int(circle_track_interval_frames)
@@ -544,6 +554,13 @@ class LabBallDetector:
         # Hough recovery still uses the predicted local window even when the
         # cheap LAB pass performs a direct broad retry.
         circle_roi = local_roi if local_roi is not None else search_roi
+        if (
+            predicted_x is not None
+            and self.circle_acquire_roi is not None
+            and self._point_axis_position(predicted_x, predicted_y)
+            <= self.circle_endpoint_position
+        ):
+            circle_roi = self.circle_acquire_roi
         if predicted_x is not None:
             if candidates:
                 self._local_miss_count = 0
@@ -585,7 +602,11 @@ class LabBallDetector:
             # Keep it even when the cheap blob pass fell back to the full ROI;
             # otherwise Hough scans the whole textured pipe on every frame.
             if predicted_x is None:
-                circle_roi = self.full_roi
+                circle_roi = (
+                    self.full_roi
+                    if self.circle_acquire_roi is None
+                    else self.circle_acquire_roi
+                )
             circle_candidates, circles = self._find_circle_candidates(
                 img, circle_roi
             )

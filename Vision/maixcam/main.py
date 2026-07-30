@@ -88,6 +88,7 @@ def build_detector():
         circle_acquire_interval_frames=(
             cfg.CIRCLE_ACQUIRE_INTERVAL_FRAMES
         ),
+        circle_acquire_roi=cfg.CIRCLE_ACQUIRE_ROI,
         circle_track_interval_frames=cfg.CIRCLE_TRACK_INTERVAL_FRAMES,
         circle_track_endpoint_only=cfg.CIRCLE_TRACK_ENDPOINT_ONLY,
         circle_x_margin=cfg.CIRCLE_X_MARGIN,
@@ -141,6 +142,7 @@ def build_tracker():
         lateral_alpha=cfg.LATERAL_ALPHA,
         confirm_frames=cfg.CONFIRM_FRAMES,
         coast_frames=cfg.COAST_FRAMES,
+        endpoint_coast_frames=cfg.ENDPOINT_COAST_FRAMES,
         memory_frames=cfg.TRACK_MEMORY_FRAMES,
         fixture_exclusions=cfg.FIXTURE_EXCLUSION_ZONES,
         fixture_blob_override_quality=(
@@ -188,6 +190,8 @@ def build_pipe_detector():
             max_right_x_distance_px=(
                 cfg.PIPE_TAPE_MAX_RIGHT_X_DISTANCE_PX
             ),
+            fixed_right_x=cfg.PIPE_TAPE_FIXED_RIGHT_X,
+            max_right_y_step_px=cfg.PIPE_TAPE_MAX_RIGHT_Y_STEP_PX,
             min_axis_length_px=cfg.PIPE_TAPE_MIN_AXIS_LENGTH_PX,
             max_axis_length_px=cfg.PIPE_TAPE_MAX_AXIS_LENGTH_PX,
             max_abs_angle_deg=cfg.PIPE_MAX_ABS_ANGLE_DEG,
@@ -198,6 +202,7 @@ def build_pipe_detector():
             smoothing_alpha=cfg.PIPE_SMOOTHING_ALPHA,
             roi_along_margin_px=cfg.PIPE_ROI_ALONG_MARGIN_PX,
             roi_lateral_margin_px=cfg.PIPE_ROI_LATERAL_MARGIN_PX,
+            roi_start_margin_px=cfg.PIPE_ROI_START_MARGIN_PX,
             max_stale_frames=cfg.PIPE_MAX_STALE_FRAMES,
         )
     return GreenPipePoseDetector(

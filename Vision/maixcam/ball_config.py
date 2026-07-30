@@ -70,7 +70,7 @@ CAMERA_GAIN = None
 # 640x480 reference image; the live right endpoint is updated below.
 ROI = _roi(30, 115, 495, 48)
 AXIS_START = _point(35, 132)
-AXIS_END = _point(519, 144)
+AXIS_END = _point(529, 144)
 TARGET_POSITION = 0.50
 
 # The camera, pivot and pipe travel are mechanically fixed.  Detect only a
@@ -83,8 +83,11 @@ PIPE_POSE_MODE = "right_tape"
 # The former endpoint screws have been removed.  The left black tape marker
 # is camera-fixed and the right marker follows pipe rotation.  Black pixels
 # on the right merge into the dark motor/cable background, so detect the
-# green-to-black boundary immediately inside the right tape instead.  Its
-# right edge is the stable tape endpoint.
+# green-to-black boundary immediately inside the right tape instead.  The
+# right marker was measured over 12,730 live frames: it moves vertically at
+# detector x=397 while only y changes.  Require the green component to reach
+# that line, then project the endpoint onto it.  This prevents an internal
+# tape shadow from shortening the pipe.
 PIPE_TAPE_LEFT_ENDPOINT = AXIS_START
 PIPE_TAPE_RIGHT_ENDPOINT = AXIS_END
 PIPE_TAPE_RIGHT_SEARCH_ROI = _roi(425, 95, 105, 105)
@@ -99,15 +102,19 @@ PIPE_TAPE_MAX_HEIGHT_PX = _sy(48)
 PIPE_TAPE_MIN_PIXELS = _area(60)
 PIPE_TAPE_X_STRIDE = 4
 PIPE_TAPE_Y_STRIDE = 3
-PIPE_TAPE_EXPECTED_RIGHT_X = _sx(519)
-PIPE_TAPE_MAX_RIGHT_X_DISTANCE_PX = _sx(16)
+PIPE_TAPE_EXPECTED_RIGHT_X = _sx(529)
+PIPE_TAPE_MAX_RIGHT_X_DISTANCE_PX = _sx(8)
+# The right endpoint has one mechanical degree of freedom in this view.
+PIPE_TAPE_FIXED_RIGHT_X = _sx(529)
+# Reject a one-update y jump that cannot be produced by the mechanism.  This
+# is deliberately checked before smoothing so a shadow cannot drag the pose.
+PIPE_TAPE_MAX_RIGHT_Y_STEP_PX = _sy(12)
 PIPE_TAPE_MIN_AXIS_LENGTH_PX = _sx(430)
 PIPE_TAPE_MAX_AXIS_LENGTH_PX = _sx(535)
 PIPE_TAPE_ENDPOINT_FROM_BLOB_RIGHT_EDGE = True
 # The endpoint crop itself ends at the tape centre, so its clipped green
 # component right edge already represents the calibrated control endpoint.
 PIPE_TAPE_ENDPOINT_X_OFFSET_PX = 0
-
 PIPE_FIXED_SEARCH_ROI = True
 PIPE_SEARCH_ROI = _roi(225, 120, 135, 42)
 PIPE_LAB_THRESHOLDS = (
@@ -145,10 +152,12 @@ PIPE_SMOOTHING_ALPHA = 0.55
 # the existing control scale without hard-coding the pipe's screen position.
 PIPE_AXIS_INSET_PX = 0
 # This is the blue control/search box shown by the Windows preview.  Keep it
-# close to the physical moving pipe: the fixed axis already represents the
-# usable pipe length, and the ball needs only a modest radius allowance above
-# and below it.  Pose acquisition has its own larger search margins above.
+# close to the physical moving pipe.  At the fixed left stop, the ball centre
+# remains inside the calibrated axis but its radius extends beyond the tape
+# endpoint, so add one asymmetric left radius without scanning past the moving
+# right tape.
 PIPE_ROI_ALONG_MARGIN_PX = 0
+PIPE_ROI_START_MARGIN_PX = _sx(16)
 PIPE_ROI_LATERAL_MARGIN_PX = _sy(16)
 PIPE_MAX_STALE_FRAMES = 9
 # Ignored in fixed-search mode; retained for the reusable generic class.
@@ -201,11 +210,10 @@ BLOB_CENTER_BIAS_ALONG_AXIS_PX = _sx(18)
 BLOB_CENTER_BIAS_MIN_QUALITY = _area(70)
 
 # Native Hough-circle recovery for the mounted car.  The 25--30 px steel ball
-# has radius 12--16 px at 640x480.  The two permanent endpoint screws are
-# smaller than 10 px.  A circle alone is not sufficient: the green pipe
-# texture produces many Hough peaks, so sampled RGB chroma must also look
-# neutral/metallic before a circle is handed to the tracker.
-CIRCLE_RECOVERY_ENABLED = False
+# has radius 12--16 px at 640x480.  A circle alone is not sufficient: the
+# green pipe texture produces many Hough peaks, so sampled RGB chroma must
+# also look neutral/metallic before a circle is handed to the tracker.
+CIRCLE_RECOVERY_ENABLED = True
 CIRCLE_THRESHOLD = 1100
 CIRCLE_MIN_RADIUS = _sx(11)
 CIRCLE_MAX_RADIUS = _sx(18)
@@ -219,12 +227,17 @@ CIRCLE_R_MARGIN = 6
 # 180--400 ms stalls and many unrelated peaks whenever the track is absent.
 # Native LAB still scans the narrow pipe ROI every frame and is the safe,
 # deterministic acquisition path.
-CIRCLE_ACQUIRE_ENABLED = False
-CIRCLE_ACQUIRE_INTERVAL_FRAMES = 8
+# The far-left ball touches tape/rail pixels and merges into an oversized LAB
+# component.  Hough acquisition is therefore restricted to this fixed
+# 36 x 45 detector-pixel endpoint crop, only 12% of the former broad search.
+# Running it on consecutive acquisition frames preserves the two-hit gate.
+CIRCLE_ACQUIRE_ENABLED = True
+CIRCLE_ACQUIRE_INTERVAL_FRAMES = 1
+CIRCLE_ACQUIRE_ROI = _roi(10, 105, 48, 60)
 # At an endpoint the LAB blob may disappear.  Hough is therefore retained
 # only for a confirmed track whose predicted point is already inside the
 # endpoint zone, and it scans only the small predicted ROI.
-CIRCLE_TRACK_INTERVAL_FRAMES = 6
+CIRCLE_TRACK_INTERVAL_FRAMES = 5
 CIRCLE_TRACK_ENDPOINT_ONLY = True
 CIRCLE_COLOR_FILTER_ENABLED = True
 CIRCLE_MAX_CHROMA = 40
@@ -257,17 +270,13 @@ CIRCLE_MAX_BELOW_ROI_CENTER_PX = _sy(9)
 MAX_AXIS_DISTANCE_PX = _sy(12)
 MAX_BELOW_AXIS_DISTANCE_PX = _sy(12)
 MAX_FRAME_JUMP_PX = _sx(60)
-# Legacy calibration overhang margins.  They remain useful if dynamic pipe
-# pose or explicit endpoint insets are disabled; with the competition's
-# non-zero endpoint insets below, the physical exclusion zone takes priority.
+# The endpoint screws have been removed, so there is no longer a physical
+# exclusion zone at either end.  Let a real ball centre reach the calibrated
+# tape endpoints; blob geometry and the narrow axis gate reject tape detail.
 ACQUIRE_POSITION_MARGIN = 0.0
 TRACK_POSITION_MARGIN = 0.0
-# A ball center cannot physically sit on the green material's exact endpoint.
-# Reflections do.  On the mounted car, however, the real ball at the right
-# stop produces Hough centres up to position 0.962.  A 2% startup exclusion
-# still rejects both outboard screws while allowing that physical end state.
-ACQUIRE_ENDPOINT_INSET = 0.02
-TRACK_ENDPOINT_INSET = 0.015
+ACQUIRE_ENDPOINT_INSET = 0.0
+TRACK_ENDPOINT_INSET = 0.0
 # A fresh target still needs two consecutive frames at quality 60.  Once the
 # ball is confirmed, geometry, continuity and the short trusted-memory window
 # are more reliable than blob quality during motion blur, so quality alone
@@ -279,35 +288,30 @@ VELOCITY_BETA = 0.14
 LATERAL_ALPHA = 0.55
 CONFIRM_FRAMES = 2
 COAST_FRAMES = 2
+# A confirmed endpoint is a fixed mechanical stop.  Keep that snapped state
+# across the four cheap frames between endpoint-only circle checks.  Any LAB
+# measurement produced as soon as the ball leaves the stop interrupts this
+# hold immediately, so moving response still uses the normal two-frame coast.
+ENDPOINT_COAST_FRAMES = 4
 TRACK_MEMORY_FRAMES = 8
 
-# The two endpoint screws are rigidly attached to the pipe.  Express their
-# centres in pipe coordinates so the exclusions rotate with the measured
-# pipe angle.  The 14 px reference radius masks only the screw/Hough halo;
-# the nearest physical ball centres remain about 20--25 reference pixels away.
+# No endpoint screws remain on the current mechanism.
 FIXTURE_EXCLUSION_ZONES = ()
-# Strong blob evidence may cross a fixture core.  Hough-only peaks (the
-# normal screw false positive) still cannot acquire there.
-# The final fixed-car empty-pipe run proved that the endpoint screw itself
-# can produce a strong LAB blob.  Do not override fixture rejection by blob
-# quality; a real endpoint ball is recovered by the inward-corrected Hough
-# candidate outside the small raw-coordinate fixture core.
+# Retained as inert reusable detector parameters while the exclusion list is
+# empty.
 FIXTURE_BLOB_OVERRIDE_QUALITY = 0
-# Outside each small hard core, apply only a continuous cost.  This breaks a
-# track's attraction to the screw halo while still letting a real ball
-# candidate win as it approaches or overlaps the endpoint.
 FIXTURE_SOFT_RADIUS_SCALE = 2.6
 FIXTURE_SOFT_PENALTY_PER_PX = 2.0
 
-# Once the ball physically reaches a stop, exact sub-pixel position is not
-# useful to the controller.  Multiple reflective arcs otherwise make the
-# measurement jump among nearby Hough peaks.  After two endpoint samples,
-# report the calibrated stop centre until the raw ball leaves a wider
-# hysteresis boundary.
-ENDPOINT_SNAP_LEFT_POSITION = 0.050
-ENDPOINT_SNAP_RIGHT_POSITION = 0.935
-ENDPOINT_SNAP_ENTER = 0.105
-ENDPOINT_SNAP_EXIT = 0.145
+# Once the ball physically reaches a stop, reflective arcs should not make
+# the controller position jump.  The screw-free live calibration places the
+# ball centres at about 1.9% and 98.2% of the tape-defined axis.  Keep only a
+# narrow release hysteresis so motion away from either stop is reported after
+# roughly 11 detector pixels rather than the old screw-era 35--50 px delay.
+ENDPOINT_SNAP_LEFT_POSITION = 0.020
+ENDPOINT_SNAP_RIGHT_POSITION = 0.980
+ENDPOINT_SNAP_ENTER = 0.035
+ENDPOINT_SNAP_EXIT = 0.050
 ENDPOINT_SNAP_CONFIRM_FRAMES = 2
 
 # MaixCAM custom UART1: A19 TX -> STM32 PC7/USART6_RX,

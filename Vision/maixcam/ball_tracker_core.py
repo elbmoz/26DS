@@ -71,6 +71,7 @@ class BallTracker:
         lateral_alpha=0.55,
         confirm_frames=2,
         coast_frames=3,
+        endpoint_coast_frames=None,
         memory_frames=8,
         fixture_exclusions=(),
         fixture_blob_override_quality=0.0,
@@ -111,7 +112,18 @@ class BallTracker:
         self.lateral_alpha = clamp(float(lateral_alpha), 0.0, 1.0)
         self.confirm_frames = max(1, int(confirm_frames))
         self.coast_frames = max(0, int(coast_frames))
-        self.memory_frames = max(self.coast_frames, int(memory_frames))
+        self.endpoint_coast_frames = max(
+            self.coast_frames,
+            (
+                self.coast_frames
+                if endpoint_coast_frames is None
+                else int(endpoint_coast_frames)
+            ),
+        )
+        self.memory_frames = max(
+            self.endpoint_coast_frames,
+            int(memory_frames),
+        )
         self.fixture_exclusions = tuple(
             (
                 float(position),
@@ -526,7 +538,12 @@ class BallTracker:
                     self.last_update_ms = now_ms
 
             if self.confirmed:
-                if self.misses <= self.coast_frames:
+                coast_limit = (
+                    self.endpoint_coast_frames
+                    if self.endpoint_lock is not None
+                    else self.coast_frames
+                )
+                if self.misses <= coast_limit:
                     self.last_quality *= 0.65
                     return self._state(True, False, self.last_quality)
                 # Once coasting is exhausted, a new measurement must pass

@@ -94,6 +94,8 @@ def roi_from_axis(
     frame_height,
     along_margin_px,
     lateral_margin_px,
+    start_along_margin_px=None,
+    end_along_margin_px=None,
 ):
     """Return an axis-aligned ROI enclosing a padded, rotated pipe axis."""
     start_x, start_y = axis_start
@@ -108,14 +110,24 @@ def roi_from_axis(
     normal_x = -unit_y
     normal_y = unit_x
     along = max(0.0, float(along_margin_px))
+    start_along = (
+        along
+        if start_along_margin_px is None
+        else max(0.0, float(start_along_margin_px))
+    )
+    end_along = (
+        along
+        if end_along_margin_px is None
+        else max(0.0, float(end_along_margin_px))
+    )
     lateral = max(1.0, float(lateral_margin_px))
     padded_start = (
-        start_x - along * unit_x,
-        start_y - along * unit_y,
+        start_x - start_along * unit_x,
+        start_y - start_along * unit_y,
     )
     padded_end = (
-        end_x + along * unit_x,
-        end_y + along * unit_y,
+        end_x + end_along * unit_x,
+        end_y + end_along * unit_y,
     )
     corners = []
     for point_x, point_y in (padded_start, padded_end):
@@ -462,6 +474,8 @@ class TapeEndpointPipePoseDetector:
         y_stride=3,
         expected_right_x=None,
         max_right_x_distance_px=0,
+        fixed_right_x=None,
+        max_right_y_step_px=0,
         min_axis_length_px=300,
         max_axis_length_px=420,
         max_abs_angle_deg=8,
@@ -470,6 +484,7 @@ class TapeEndpointPipePoseDetector:
         smoothing_alpha=0.70,
         roi_along_margin_px=0,
         roi_lateral_margin_px=12,
+        roi_start_margin_px=0,
         max_stale_frames=12,
     ):
         self.frame_width = int(frame_width)
@@ -507,6 +522,12 @@ class TapeEndpointPipePoseDetector:
         self.max_right_x_distance_px = max(
             0.0, float(max_right_x_distance_px)
         )
+        self.fixed_right_x = (
+            None if fixed_right_x is None else float(fixed_right_x)
+        )
+        self.max_right_y_step_px = max(
+            0.0, float(max_right_y_step_px)
+        )
         self.min_axis_length_px = max(1.0, float(min_axis_length_px))
         self.max_axis_length_px = max(
             self.min_axis_length_px,
@@ -524,11 +545,22 @@ class TapeEndpointPipePoseDetector:
         self.roi_lateral_margin_px = max(
             1.0, float(roi_lateral_margin_px)
         )
+        self.roi_start_margin_px = max(
+            self.roi_along_margin_px,
+            float(roi_start_margin_px),
+        )
         self.max_stale_frames = max(0, int(max_stale_frames))
 
-        self.axis_start = self.fixed_left_endpoint
-        self.axis_end = self.fallback_right_endpoint
-        self.ball_roi = self.fallback_roi
+        fallback_right_x = (
+            self.fallback_right_endpoint[0]
+            if self.fixed_right_x is None
+            else self.fixed_right_x
+        )
+        self.physical_right_endpoint = (
+            fallback_right_x,
+            self.fallback_right_endpoint[1],
+        )
+        self._update_control_geometry()
         self.has_measurement = False
         self.age_frames = self.max_stale_frames + 1
         self.last_score = 0.0
@@ -537,6 +569,21 @@ class TapeEndpointPipePoseDetector:
             self.axis_end[1] - self.axis_start[1],
         )
         self.last_width = 0.0
+
+    def _update_control_geometry(self):
+        """Publish the tape-defined control axis and asymmetric ball ROI."""
+        self.axis_start = self.fixed_left_endpoint
+        self.axis_end = self.physical_right_endpoint
+        self.ball_roi = roi_from_axis(
+            self.axis_start,
+            self.axis_end,
+            self.frame_width,
+            self.frame_height,
+            self.roi_along_margin_px,
+            self.roi_lateral_margin_px,
+            start_along_margin_px=self.roi_start_margin_px,
+            end_along_margin_px=self.roi_along_margin_px,
+        )
 
     def _find(self, img):
         return img.find_blobs(
@@ -579,7 +626,18 @@ class TapeEndpointPipePoseDetector:
         ):
             return None
 
-        delta_x = center_x - self.fixed_left_endpoint[0]
+        endpoint_x = (
+            center_x if self.fixed_right_x is None else self.fixed_right_x
+        )
+        if (
+            self.has_measurement
+            and self.max_right_y_step_px > 0.0
+            and abs(center_y - self.physical_right_endpoint[1])
+            > self.max_right_y_step_px
+        ):
+            return None
+
+        delta_x = endpoint_x - self.fixed_left_endpoint[0]
         delta_y = center_y - self.fixed_left_endpoint[1]
         length = math.hypot(delta_x, delta_y)
         if (
@@ -605,7 +663,7 @@ class TapeEndpointPipePoseDetector:
             + float(width)
             - 3.0 * x_error
         )
-        return score, (center_x, center_y), length, min(width, height)
+        return score, (endpoint_x, center_y), length, min(width, height)
 
     def update(self, img, frame_id):
         measured = False
@@ -627,23 +685,23 @@ class TapeEndpointPipePoseDetector:
                 score, right_endpoint, length, marker_width = candidates[0]
                 if self.has_measurement:
                     alpha = self.smoothing_alpha
-                    self.axis_end = (
-                        self.axis_end[0]
-                        + alpha * (right_endpoint[0] - self.axis_end[0]),
-                        self.axis_end[1]
-                        + alpha * (right_endpoint[1] - self.axis_end[1]),
+                    self.physical_right_endpoint = (
+                        self.physical_right_endpoint[0]
+                        + alpha
+                        * (
+                            right_endpoint[0]
+                            - self.physical_right_endpoint[0]
+                        ),
+                        self.physical_right_endpoint[1]
+                        + alpha
+                        * (
+                            right_endpoint[1]
+                            - self.physical_right_endpoint[1]
+                        ),
                     )
                 else:
-                    self.axis_end = right_endpoint
-                self.axis_start = self.fixed_left_endpoint
-                self.ball_roi = roi_from_axis(
-                    self.axis_start,
-                    self.axis_end,
-                    self.frame_width,
-                    self.frame_height,
-                    self.roi_along_margin_px,
-                    self.roi_lateral_margin_px,
-                )
+                    self.physical_right_endpoint = right_endpoint
+                self._update_control_geometry()
                 self.has_measurement = True
                 self.age_frames = 0
                 self.last_score = float(score)

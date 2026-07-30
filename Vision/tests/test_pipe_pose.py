@@ -131,6 +131,20 @@ class PipePoseTests(unittest.TestCase):
         )
         self.assertEqual(roi, (49, 98, 345, 25))
 
+    def test_control_roi_can_extend_only_the_fixed_left_end(self):
+        roi = roi_from_axis(
+            (26, 99),
+            (397, 108),
+            480,
+            360,
+            along_margin_px=0,
+            lateral_margin_px=12,
+            start_along_margin_px=12,
+            end_along_margin_px=0,
+        )
+        self.assertEqual(roi[0], 13)
+        self.assertEqual(roi[0] + roi[2], 399)
+
     def test_detector_updates_every_second_frame_and_keeps_pose_between(self):
         first = FakeBlob(rectangle_corners((315, 168), 423, 28, 2))
         second = FakeBlob(rectangle_corners((320, 180), 423, 28, 4))
@@ -404,6 +418,74 @@ class PipePoseTests(unittest.TestCase):
 
         self.assertTrue(state["measured"])
         self.assertEqual(state["axis_end"], (389.0, 108.0))
+
+    def test_right_tape_is_projected_onto_fixed_trajectory(self):
+        green_fragment = FakeTapeBlob(
+            360,
+            108,
+            42,
+            15,
+            420,
+            left=352,
+        )
+        image = FakeImage([[green_fragment]])
+        detector = TapeEndpointPipePoseDetector(
+            480,
+            360,
+            right_search_roi=(319, 71, 90, 79),
+            fallback_roi=(20, 70, 390, 70),
+            fixed_left_endpoint=(26, 99),
+            fallback_right_endpoint=(397, 108),
+            thresholds=((5, 90, -55, -12, -15, 40),),
+            min_width_px=22,
+            max_width_px=112,
+            min_height_px=6,
+            max_height_px=36,
+            min_pixels=34,
+            expected_right_x=393,
+            max_right_x_distance_px=2,
+            fixed_right_x=397,
+            min_axis_length_px=322,
+            max_axis_length_px=402,
+            endpoint_from_blob_right_edge=True,
+            smoothing_alpha=1.0,
+            roi_start_margin_px=12,
+        )
+
+        state = detector.update(image, 0)
+
+        self.assertTrue(state["measured"])
+        self.assertEqual(state["axis_start"], (26.0, 99.0))
+        self.assertEqual(state["axis_end"], (397.0, 108.0))
+        self.assertEqual(state["ball_roi"][0], 13)
+
+    def test_right_tape_rejects_impossible_y_jump_before_smoothing(self):
+        first = FakeTapeBlob(390, 108, 22, 20, 310)
+        shadow = FakeTapeBlob(390, 132, 22, 20, 310)
+        image = FakeImage([[first], [shadow]])
+        detector = TapeEndpointPipePoseDetector(
+            480,
+            360,
+            right_search_roi=(368, 52, 42, 94),
+            fallback_roi=(20, 70, 390, 70),
+            fixed_left_endpoint=(26, 99),
+            fallback_right_endpoint=(397, 108),
+            thresholds=((5, 90, -55, -12, -15, 40),),
+            detect_interval_frames=3,
+            fixed_right_x=397,
+            max_right_y_step_px=9,
+            min_axis_length_px=322,
+            max_axis_length_px=402,
+            smoothing_alpha=0.5,
+        )
+
+        first_state = detector.update(image, 0)
+        jumped_state = detector.update(image, 3)
+
+        self.assertTrue(first_state["measured"])
+        self.assertFalse(jumped_state["measured"])
+        self.assertEqual(jumped_state["axis_end"], (397.0, 108.0))
+        self.assertEqual(jumped_state["age_frames"], 1)
 
 
 if __name__ == "__main__":

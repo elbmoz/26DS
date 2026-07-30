@@ -544,6 +544,28 @@ class BallTrackerCoreTests(unittest.TestCase):
         self.assertEqual(jitter["velocity_px_s"], 0.0)
         self.assertEqual(released["measurement_x"], 16.0)
 
+    def test_confirmed_endpoint_can_coast_between_sparse_checks(self):
+        tracker = BallTracker(
+            (0, 0),
+            (100, 0),
+            confirm_frames=1,
+            coast_frames=1,
+            endpoint_coast_frames=4,
+            endpoint_snap_left_position=0.05,
+            endpoint_snap_enter=0.10,
+            endpoint_snap_exit=0.14,
+            endpoint_snap_confirm_frames=1,
+        )
+
+        locked = tracker.update([(4, 0, 10, 100)], 0)
+        held = [tracker.update([], index * 20) for index in range(1, 5)]
+        expired = tracker.update([], 100)
+
+        self.assertTrue(locked["valid"])
+        self.assertTrue(all(state["valid"] for state in held))
+        self.assertTrue(all(state["coasting"] for state in held))
+        self.assertFalse(expired["valid"])
+
     def test_broad_circle_acquisition_can_be_rate_limited(self):
         class FakeImage:
             def __init__(self):
@@ -652,6 +674,34 @@ class BallTrackerCoreTests(unittest.TestCase):
         ]
         self.assertEqual(circle_counts, [0] * 8)
         self.assertEqual(image.circle_calls, 0)
+
+    def test_circle_acquisition_can_use_fixed_endpoint_roi(self):
+        class FakeImage:
+            def __init__(self):
+                self.circle_rois = []
+
+            def find_blobs(self, _thresholds, **_kwargs):
+                return []
+
+            def find_circles(self, **kwargs):
+                self.circle_rois.append(tuple(kwargs["roi"]))
+                return [FakeCircle(45, 145, 12)]
+
+        image = FakeImage()
+        detector = LabBallDetector(
+            640,
+            480,
+            (45, 112, 500, 70),
+            ((0, 85, -22, 22, -20, 20),),
+            circle_enabled=True,
+            circle_acquire_enabled=True,
+            circle_acquire_roi=(20, 120, 80, 60),
+        )
+
+        result = detector.detect(image)
+
+        self.assertEqual(result["circle_count"], 1)
+        self.assertEqual(image.circle_rois, [(20, 120, 80, 60)])
 
     def test_tracked_circle_recovery_can_be_rate_limited(self):
         class FakeImage:
