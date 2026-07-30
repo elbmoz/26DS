@@ -410,8 +410,8 @@ B,-27,18
 
 | MaixCAM | STM32F407 |
 |---|---|
-| A19 / UART1_TX | PC7 / USART6_RX |
-| A18 / UART1_RX | PC6 / USART6_TX |
+| A28 / UART2_TX | PC7 / USART6_RX |
+| A29 / UART2_RX | PC6 / USART6_TX |
 | GND | GND |
 
 TX/RX 交叉并共地。

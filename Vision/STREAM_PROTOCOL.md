@@ -20,7 +20,7 @@ Windows UDP set_config     -> MaixCAM 安全参数白名单
 | MaixCAM -> Windows | RTSP/H.264 | 8554 | 图传 |
 | MaixCAM -> Windows | UDP/JSON | 42101 | 逐帧遥测、状态、ACK |
 | Windows -> MaixCAM | UDP/JSON | 42102 | 订阅和视觉参数更新 |
-| MaixCAM UART1 -> STM32 | UART 115200 8N1 | USART6 | 位置误差与轴向速度 |
+| MaixCAM UART2 -> STM32 | UART 115200 8N1 | USART6 | 位置误差与轴向速度 |
 
 USB 网卡环境的 MaixCAM 默认地址为 `10.16.6.1`。换成 Wi-Fi 后，在
 Windows 启动参数中传入新的 `--device-ip`，不要修改协议。

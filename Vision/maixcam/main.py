@@ -15,12 +15,16 @@ def init_uart():
         return None
     try:
         err.check_raise(
-            pinmap.set_pin_function(cfg.UART_TX_PIN, "UART1_TX"),
-            "failed to map MaixCAM UART1 TX",
+            pinmap.set_pin_function(
+                cfg.UART_TX_PIN, cfg.UART_TX_FUNCTION
+            ),
+            "failed to map MaixCAM UART TX",
         )
         err.check_raise(
-            pinmap.set_pin_function(cfg.UART_RX_PIN, "UART1_RX"),
-            "failed to map MaixCAM UART1 RX",
+            pinmap.set_pin_function(
+                cfg.UART_RX_PIN, cfg.UART_RX_FUNCTION
+            ),
+            "failed to map MaixCAM UART RX",
         )
         return uart.UART(cfg.UART_DEVICE, cfg.UART_BAUD)
     except Exception as exc:
