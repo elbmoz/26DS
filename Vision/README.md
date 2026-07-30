@@ -373,33 +373,37 @@ MP4 的真实帧率、帧数、时长以及与日志的时长差。
 
 ## STM32 串口协议
 
-检测或短时预测有效时发送：
+STM32 选择题目 2 并按确认键后，通过 USART6 发送：
 
 ```text
-x_error_px,lateral_error_px\n
+c2
 ```
 
-例如钢球位于目标点左侧 27 像素：
+MaixCAM 收到后才以 50 Hz 发送位置误差和轴向速度：
 
 ```text
--27,2
+B,error_px,velocity_px_s\n
 ```
 
-长期丢球时发送：
+例如钢球位于中心左侧 27 个参考像素、正在以 18 px/s 向视觉右侧运动：
 
 ```text
-none
+B,-27,18
 ```
 
-协议与 `Core/Src/vision_link.c` 一致。发送频率为 50 Hz，115200 8N1。
+误差和速度均以视觉右侧为正。输出乘以 `CONTROL_OUTPUT_SCALE`，因此无论
+检测通道是否降到 480 宽，STM32 看到的仍是原 640 宽标定坐标。长期丢球
+发送 `none\n`。题目停止时 STM32 发送 `ok`，MaixCAM 随即停止串口数据帧。
+协议实现位于 `maixcam/stm32_link.py` 和 `Core/Src/BallVision.c`，串口为
+115200、8N1。
 
 ## 接线
 
-| MaixCAM | 扩展板 UART5/FPC2 |
+| MaixCAM | STM32F407 |
 |---|---|
-| A19 / UART1_TX | pin 3 / STM32 UART5_RX (PD2) |
-| A18 / UART1_RX | pin 2 / STM32 UART5_TX (PC12) |
-| GND | pin 1 / GND |
+| A19 / UART1_TX | PC7 / USART6_RX |
+| A18 / UART1_RX | PC6 / USART6_TX |
+| GND | GND |
 
 TX/RX 交叉并共地。
 

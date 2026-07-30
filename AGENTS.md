@@ -27,8 +27,8 @@ Preprocessor defines: `USE_HAL_DRIVER;STM32F407xx`
    retained under its original name and now used with JY61P on USART2.
 3. `serial.c/.h` — Retained line-based vision receiver on UART5. It accepts
    `x_error,y_error\n` and `none\n`.
-4. `BallVision.c/.h` — Question 2 single-value receiver on USART6. It accepts
-   a signed decimal ball position such as `-2.5\n`, or `none\n`.
+4. `BallVision.c/.h` — Question 2 receiver on USART6. After `c2` start it
+   accepts `B,error_px,velocity_px_s\n`, or `none\n`; `ok` stops the stream.
 5. `DS.c/.h` — Board mapping and the application-facing hardware facade. It owns
    motor address/direction mapping, reads all infrared inputs, aggregates vision
    and IMU data, and exposes chassis/balance-frame commands.
@@ -37,8 +37,9 @@ Preprocessor defines: `USE_HAL_DRIVER;STM32F407xx`
 8. `LineFollow.c/.h` — 8-sensor weighted-centroid PD line follower with curve
    slowdown and IMU unwrapped-yaw one-lap stopping.
 9. `BalanceControl.c/.h` — Question 2 position PID driving USART1 motor address
-   `0x03`. The current phase regulates the ball to center (`target=0`); the
-   later `+5 cm -> -5 cm` sequence has reserved targets and a target setter.
+   `0x03`. It uses MaixCAM position for P/I and filtered axis velocity for D.
+   The current phase regulates to center (`target=0`); the later
+   `+5 cm -> -5 cm` sequence has reserved pixel targets and a target setter.
 10. `DS_task.c/.h` — Question selection and start state machine. Question 1
     runs line following; Question 2 runs center-return control. Both display
     elapsed time and diagnostics on the OLED.
@@ -58,7 +59,7 @@ to the motor, vision, and IMU handlers; each handler checks its UART instance.
 | Balance-frame motor | USART1 address `0x03` |
 | IMU (JY61P) | USART2, 9600 |
 | General vision (retained) | UART5, 9600 |
-| Question 2 ball vision | USART6, PC6 TX / PC7 RX, 9600 |
+| Question 2 ball vision | USART6, PC6 TX / PC7 RX, 115200 |
 | Infrared 1 through 8, left to right | PE11, PE10, PE9, PE8, PE7, PA6, PA11, PA7 |
 | Infrared active level | Low |
 | Button 1 / question select | PB6, active-low, internal pull-up |

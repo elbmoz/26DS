@@ -50,6 +50,8 @@ int main(void)
     Error_Handler();
   }
 
+  (void)DS_BalanceMoveRelative(350, 50U, 10U);
+
   DS_Task_Init();
 
   if (HAL_TIM_Base_Start_IT(&htim2) != HAL_OK) {

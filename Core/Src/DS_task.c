@@ -124,9 +124,9 @@ static void DS_Task_ShowQuestion1(void)
 static void DS_Task_ShowQuestion2(void)
 {
     OLED_Clear();
-    OLED_ShowString(1U, 1U, "Q2 BALL CENTER");
-    OLED_ShowString(2U, 1U, "P:+000.0 T:+000X");
-    OLED_ShowString(3U, 1U, "E:+000.0 O:+000");
+    OLED_ShowString(1U, 1U, "Q2 CENTER RX:X R");
+    OLED_ShowString(2U, 1U, "E:+000.0 V:+000");
+    OLED_ShowString(3U, 1U, "OUT:+000 ST:000");
     OLED_ShowString(4U, 1U, "TIME:0000.0s");
 }
 
@@ -146,12 +146,20 @@ static void DS_Task_ShowQuestion2Finished(void)
     OLED_ShowString(1U, 1U, "Q2 STOPPED");
     OLED_ShowString(2U, 1U, "TIME:0000.0s");
     DS_Task_ShowTime(ds_task.elapsed_ms);
-    OLED_ShowString(3U, 1U, "K2:MENU");
-    OLED_ShowString(4U, 1U, "P:+000.0");
+    OLED_ShowString(3U, 1U, "E:+000.0 V:+000");
     DS_Task_ShowSignedFixedOne(
-        4U,
+        3U,
         3U,
         balance_control_state.ball_position);
+    OLED_ShowSignedNum(
+        3U,
+        12U,
+        DS_Task_Clamp(
+            (int32_t)balance_control_state.ball_velocity,
+            -999,
+            999),
+        3U);
+    OLED_ShowString(4U, 1U, "K2:MENU");
 }
 
 static void DS_Task_ShowNotReady(void)
@@ -201,9 +209,9 @@ static void DS_Task_StartQuestion2(void)
     ds_task_last_display_ms = ds_task.start_ms -
                               DS_TASK_DISPLAY_PERIOD_MS;
 
-    DS_Task_ShowQuestion2();
-    BallVision_StartStream();
     BalanceControl_Start(0.0f);
+    BallVision_StartStream();
+    DS_Task_ShowQuestion2();
 }
 
 static void DS_Task_UpdateQuestion1Display(uint32_t now)
@@ -222,7 +230,8 @@ static void DS_Task_UpdateQuestion1Display(uint32_t now)
 static void DS_Task_UpdateQuestion2Display(uint32_t now)
 {
     int32_t output;
-    int32_t target;
+    int32_t velocity;
+    uint32_t stable_count;
 
     if ((uint32_t)(now - ds_task_last_display_ms) <
         DS_TASK_DISPLAY_PERIOD_MS) {
@@ -235,25 +244,25 @@ static void DS_Task_UpdateQuestion2Display(uint32_t now)
         3U,
         balance_control_state.ball_position);
 
-    target = DS_Task_Clamp(
-        (int32_t)balance_control_state.target_position,
+    velocity = DS_Task_Clamp(
+        (int32_t)balance_control_state.ball_velocity,
         -999,
         999);
-    OLED_ShowSignedNum(2U, 12U, target, 3U);
+    OLED_ShowSignedNum(2U, 12U, velocity, 3U);
     OLED_ShowChar(
-        2U,
-        16U,
+        1U,
+        14U,
         (balance_control_state.vision_valid != 0U) ? 'V' : 'X');
 
-    DS_Task_ShowSignedFixedOne(
-        3U,
-        3U,
-        balance_control_state.position_error);
     output = DS_Task_Clamp(
         balance_control_state.motor_command,
         -999,
         999);
-    OLED_ShowSignedNum(3U, 12U, output, 3U);
+    OLED_ShowSignedNum(3U, 5U, output, 3U);
+    stable_count = (balance_control_state.stable_count > 999U) ?
+                   999U :
+                   balance_control_state.stable_count;
+    OLED_ShowNum(3U, 13U, stable_count, 3U);
     OLED_ShowChar(
         1U,
         16U,

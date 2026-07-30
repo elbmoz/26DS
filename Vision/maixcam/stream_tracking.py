@@ -6,7 +6,6 @@ import sys
 from maix import app, camera, err, image, rtsp, time
 
 import ball_config as cfg
-from ball_tracker_core import format_vision_line
 from main import (
     build_detector,
     build_pipe_detector,
@@ -19,6 +18,7 @@ from main import (
 )
 from network_link import UdpVisionLink
 from loop_timing import periodic_due
+from stm32_link import Stm32Link
 from stream_protocol import (
     config_snapshot,
     make_status_packet,
@@ -82,7 +82,10 @@ def _status_packet(
 
 
 def main():
-    serial_port = init_uart()
+    stm32_link = Stm32Link(
+        init_uart(),
+        output_scale=cfg.CONTROL_OUTPUT_SCALE,
+    )
     screen = init_display() if cfg.STREAM_LOCAL_PREVIEW else None
     cam = camera.Camera(
         width=cfg.CAMERA_WIDTH,
@@ -146,6 +149,7 @@ def main():
         while True:
             if app.need_exit():
                 break
+            stm32_link.poll_commands()
             for event in link.poll_controls(detector, tracker, cfg):
                 if event["ok"]:
                     print(
@@ -203,12 +207,7 @@ def main():
                 now_ms, next_uart_ms, uart_period_ms
             )
             if uart_due:
-                if serial_port is not None:
-                    serial_port.write_str(
-                        format_vision_line(
-                            state, cfg.CONTROL_OUTPUT_SCALE
-                        )
-                    )
+                stm32_link.send_state(state)
 
             network_due, next_network_ms = periodic_due(
                 now_ms, next_network_ms, network_period_ms

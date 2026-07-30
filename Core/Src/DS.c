@@ -93,6 +93,7 @@ HAL_StatusTypeDef DS_Init(void)
     ds_state.vision_frame_count = 0U;
     ds_state.vision_last_rx_ms = 0U;
     ds_state.ball_position = 0.0f;
+    ds_state.ball_velocity = 0.0f;
     ds_state.ball_vision_valid = 0U;
     ds_state.ball_vision_frame_count = 0U;
     ds_state.ball_vision_last_rx_ms = 0U;
@@ -216,9 +217,12 @@ uint8_t DS_VisionIsFresh(void)
             DS_VISION_TIMEOUT_MS) ? 1U : 0U;
 }
 
-void DS_BallVisionUpdateFromISR(float position, uint8_t valid)
+void DS_BallVisionUpdateFromISR(float position,
+                                float velocity,
+                                uint8_t valid)
 {
     ds_state.ball_position = position;
+    ds_state.ball_velocity = velocity;
     ds_state.ball_vision_valid = (valid != 0U) ? 1U : 0U;
     ds_state.ball_vision_last_rx_ms = HAL_GetTick();
     ds_state.ball_vision_frame_count++;

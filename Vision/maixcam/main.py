@@ -4,9 +4,10 @@ from maix import app, camera, display, err, image, pinmap, time, uart
 
 import ball_config as cfg
 from ball_detector import LabBallDetector
-from ball_tracker_core import BallTracker, format_vision_line
+from ball_tracker_core import BallTracker
 from loop_timing import periodic_due
 from pipe_pose import GreenPipePoseDetector
+from stm32_link import Stm32Link
 
 
 def init_uart():
@@ -323,7 +324,10 @@ def draw_overlay(img, detection, state, fps_value, measured_ratio):
 
 
 def main():
-    serial_port = init_uart()
+    stm32_link = Stm32Link(
+        init_uart(),
+        output_scale=cfg.CONTROL_OUTPUT_SCALE,
+    )
     screen = init_display()
     cam = camera.Camera(
         width=cfg.CAMERA_WIDTH,
@@ -353,6 +357,7 @@ def main():
     frame_id = 0
 
     while not app.need_exit():
+        stm32_link.poll_commands()
         img = cam.read()
         now_ms = time.ticks_ms()
         detect_start_ms = time.ticks_ms()
@@ -377,10 +382,7 @@ def main():
             now_ms, next_send_ms, send_period_ms
         )
         if send_due:
-            if serial_port is not None:
-                serial_port.write_str(
-                    format_vision_line(state, cfg.CONTROL_OUTPUT_SCALE)
-                )
+            stm32_link.send_state(state)
 
         if now_ms - last_console_ms >= console_period_ms:
             measured_ratio = (

@@ -9,10 +9,15 @@ extern "C" {
 
 /*
  * USART6 line protocol for Question 2:
- *   -12.5\n    signed ball position relative to the rod center
- *   none\n     no valid detection
+ *   B,-12,35\n  signed center error in reference pixels and velocity
+ *               in reference pixels per second
+ *   none\n       no valid detection
+ *
+ * The receiver is armed only by BallVision_StartStream(). The STM32 sends
+ * "c2" to start MaixCAM output and "ok" when Question 2 stops.
  */
 extern volatile uint32_t ball_vision_parse_error_count;
+extern volatile uint8_t ball_vision_stream_active;
 
 void BallVision_Init(UART_HandleTypeDef *huart);
 void BallVision_StartStream(void);

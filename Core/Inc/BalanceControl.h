@@ -16,19 +16,21 @@ typedef struct
     float integral_limit;
     float output_limit;
     float pid_deadband;
+    float velocity_deadband;
 
     uint32_t control_period_ms;
     uint8_t motor_slope;
     int8_t motor_direction;
 
     float stable_error;
+    float stable_velocity;
     uint16_t stable_cycles;
 
     /*
-     * Reserved for the later +5 cm -> -5 cm sequence. These values assume
-     * that the vision module sends position in centimeters. Recalibrate them
-     * if the vision output uses pixels or millimeters.
+     * Vision sends the original 640-wide reference-pixel scale. The current
+     * 450 px calibrated pipe axis spans about 24.7 cm.
      */
+    float pixels_per_cm;
     float positive_5cm_target;
     float negative_5cm_target;
 } BalanceControlConfig;
@@ -40,7 +42,9 @@ typedef struct
     volatile uint8_t stable;
     volatile float target_position;
     volatile float ball_position;
+    volatile float ball_velocity;
     volatile float position_error;
+    volatile float velocity_d_term;
     volatile float pid_output;
     volatile int32_t motor_command;
     volatile uint16_t stable_count;

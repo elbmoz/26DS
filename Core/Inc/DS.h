@@ -68,8 +68,12 @@ typedef struct
     volatile uint32_t vision_frame_count;
     volatile uint32_t vision_last_rx_ms;
 
-    /* Question 2 ball position relative to the rod center. */
+    /*
+     * Question 2 output in the vision reference-pixel coordinate system:
+     * position/error and velocity are positive toward image right.
+     */
     volatile float ball_position;
+    volatile float ball_velocity;
     volatile uint8_t ball_vision_valid;
     volatile uint32_t ball_vision_frame_count;
     volatile uint32_t ball_vision_last_rx_ms;
@@ -92,7 +96,9 @@ uint8_t DS_IR_ReadActive(void);
 
 void DS_VisionUpdateFromISR(int32_t x_error, int32_t y_error, uint8_t valid);
 uint8_t DS_VisionIsFresh(void);
-void DS_BallVisionUpdateFromISR(float position, uint8_t valid);
+void DS_BallVisionUpdateFromISR(float position,
+                                float velocity,
+                                uint8_t valid);
 uint8_t DS_BallVisionIsFresh(void);
 
 void DS_MotorsEnable(void);

@@ -9,7 +9,6 @@ import os
 from maix import app, camera, image, time, video
 
 import ball_config as cfg
-from ball_tracker_core import format_vision_line
 from main import (
     build_detector,
     build_pipe_detector,
@@ -22,6 +21,7 @@ from main import (
 )
 from tracking_log import RunStats, csv_header, tracking_row
 from loop_timing import periodic_due
+from stm32_link import Stm32Link
 
 
 def make_run_directory():
@@ -108,7 +108,10 @@ def main():
     summary_path = run_dir + "/summary.txt"
     print("recording directory:", run_dir)
 
-    serial_port = init_uart()
+    stm32_link = Stm32Link(
+        init_uart(),
+        output_scale=cfg.CONTROL_OUTPUT_SCALE,
+    )
     screen = init_display()
     cam = camera.Camera(
         width=cfg.CAMERA_WIDTH,
@@ -158,6 +161,7 @@ def main():
         last_frame_ms = start_ms
         next_send_ms = start_ms
         while not app.need_exit():
+            stm32_link.poll_commands()
             try:
                 img = cam.read()
                 camera_errors = 0
@@ -215,10 +219,8 @@ def main():
             send_due, next_send_ms = periodic_due(
                 now_ms, next_send_ms, send_period_ms
             )
-            if send_due and serial_port is not None:
-                serial_port.write_str(
-                    format_vision_line(state, cfg.CONTROL_OUTPUT_SCALE)
-                )
+            if send_due:
+                stm32_link.send_state(state)
 
             if now_ms - last_console_ms >= console_period_ms:
                 measured = 100.0 * stats.measured / max(1, stats.frames)

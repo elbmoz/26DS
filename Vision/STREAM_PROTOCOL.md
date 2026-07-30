@@ -4,7 +4,7 @@
 
 ```text
 GC4653
-  ├─ RGB 480×360 -> 绿色管道姿态 -> 动态 ROI/轴线 -> 钢球检测 -> UART5 -> STM32
+  ├─ RGB 480×360 -> 绿色管道姿态 -> 动态 ROI/轴线 -> 钢球检测 -> USART6 -> STM32
   └─ NV21 448×336 -> H.264/RTSP -> Windows
 
 MaixCAM UDP tracking/status -> Windows 日志与画面叠加
@@ -20,10 +20,23 @@ Windows UDP set_config     -> MaixCAM 安全参数白名单
 | MaixCAM -> Windows | RTSP/H.264 | 8554 | 图传 |
 | MaixCAM -> Windows | UDP/JSON | 42101 | 逐帧遥测、状态、ACK |
 | Windows -> MaixCAM | UDP/JSON | 42102 | 订阅和视觉参数更新 |
-| MaixCAM -> STM32 | UART 115200 8N1 | UART5 | 控制所需位置误差 |
+| MaixCAM UART1 -> STM32 | UART 115200 8N1 | USART6 | 位置误差与轴向速度 |
 
 USB 网卡环境的 MaixCAM 默认地址为 `10.16.6.1`。换成 Wi-Fi 后，在
 Windows 启动参数中传入新的 `--device-ip`，不要修改协议。
+
+### 2.1 STM32 题目 2 串口帧
+
+STM32 确认启动题目 2 后发送两个 ASCII 字节 `c2`，MaixCAM 才开始输出。
+有效跟踪帧为：
+
+```text
+B,<error_px>,<velocity_px_s>\n
+```
+
+两项均使用原 640 宽参考像素标定，视觉右侧为正。丢球或预测续航结束后发送
+`none\n`。STM32 停止题目时发送 `ok`，MaixCAM 停止输出。换行用于流式
+重同步，`B` 帧头用于拒绝其他串口文本。
 
 ## 3. 会话建立
 
