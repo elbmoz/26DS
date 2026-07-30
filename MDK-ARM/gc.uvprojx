@@ -425,6 +425,26 @@
               <FilePath>..\Core\Inc\DS_task.h</FilePath>
             </File>
             <File>
+              <FileName>BallVision.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\BallVision.c</FilePath>
+            </File>
+            <File>
+              <FileName>BallVision.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Core\Inc\BallVision.h</FilePath>
+            </File>
+            <File>
+              <FileName>BalanceControl.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\BalanceControl.c</FilePath>
+            </File>
+            <File>
+              <FileName>BalanceControl.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Core\Inc\BalanceControl.h</FilePath>
+            </File>
+            <File>
               <FileName>LineFollow.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\Core\Src\LineFollow.c</FilePath>
@@ -545,6 +565,11 @@
               <FilePath>..\Core\Inc\WS2812.h</FilePath>
             </File>
             <File>
+              <FileName>encoder_f407.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\encoder_f407.c</FilePath>
+            </File>
+            <File>
               <FileName>screen.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\Core\Src\screen.c</FilePath>
@@ -553,11 +578,6 @@
               <FileName>screen.h</FileName>
               <FileType>5</FileType>
               <FilePath>..\Core\Inc\screen.h</FilePath>
-            </File>
-            <File>
-              <FileName>encoder_f407.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\Core\Src\encoder_f407.c</FilePath>
             </File>
             <File>
               <FileName>encoder_f407.h</FileName>

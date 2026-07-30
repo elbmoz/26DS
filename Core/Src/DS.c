@@ -1,5 +1,6 @@
 #include "DS.h"
 
+#include "BallVision.h"
 #include "HWT101.h"
 #include "serial.h"
 #include "usart.h"
@@ -7,6 +8,9 @@
 
 static DS_State ds_state;
 static volatile uint32_t ds_1ms_pending;
+
+#define DS_CHASSIS_STOP_RETRY_COUNT     2U
+#define DS_MOTOR_STOP_GAP_MS            2U
 
 static GPIO_TypeDef * const ds_ir_ports[DS_IR_SENSOR_COUNT] = {
     DS_IR_1_PORT,
@@ -88,6 +92,10 @@ HAL_StatusTypeDef DS_Init(void)
     ds_state.vision_valid = 0U;
     ds_state.vision_frame_count = 0U;
     ds_state.vision_last_rx_ms = 0U;
+    ds_state.ball_position = 0.0f;
+    ds_state.ball_vision_valid = 0U;
+    ds_state.ball_vision_frame_count = 0U;
+    ds_state.ball_vision_last_rx_ms = 0U;
     ds_state.yaw_deg = 0.0f;
     ds_state.gyro_y_dps = 0.0f;
     ds_state.gyro_z_dps = 0.0f;
@@ -102,6 +110,7 @@ HAL_StatusTypeDef DS_Init(void)
     DS_BalanceStop();
 
     Serial_Init(&huart5);
+    BallVision_Init(&huart6);
     HWT101_Init(&huart2);
 
     return HAL_OK;
@@ -139,6 +148,12 @@ void DS_Run(void)
         (uint32_t)(now - ds_state.vision_last_rx_ms) >
         DS_VISION_TIMEOUT_MS) {
         ds_state.vision_valid = 0U;
+    }
+
+    if (ds_state.ball_vision_valid != 0U &&
+        (uint32_t)(now - ds_state.ball_vision_last_rx_ms) >
+        DS_BALL_VISION_TIMEOUT_MS) {
+        ds_state.ball_vision_valid = 0U;
     }
 
     /* Also services timeout state for asynchronous motor readback. */
@@ -199,6 +214,25 @@ uint8_t DS_VisionIsFresh(void)
 
     return ((uint32_t)(HAL_GetTick() - ds_state.vision_last_rx_ms) <=
             DS_VISION_TIMEOUT_MS) ? 1U : 0U;
+}
+
+void DS_BallVisionUpdateFromISR(float position, uint8_t valid)
+{
+    ds_state.ball_position = position;
+    ds_state.ball_vision_valid = (valid != 0U) ? 1U : 0U;
+    ds_state.ball_vision_last_rx_ms = HAL_GetTick();
+    ds_state.ball_vision_frame_count++;
+}
+
+uint8_t DS_BallVisionIsFresh(void)
+{
+    if (ds_state.ball_vision_valid == 0U) {
+        return 0U;
+    }
+
+    return ((uint32_t)(HAL_GetTick() -
+                       ds_state.ball_vision_last_rx_ms) <=
+            DS_BALL_VISION_TIMEOUT_MS) ? 1U : 0U;
 }
 
 void DS_MotorsEnable(void)
@@ -263,11 +297,24 @@ HAL_StatusTypeDef DS_ChassisSetSpeed(int32_t left_speed,
 
 void DS_ChassisStop(void)
 {
-    (void)Motor_Stop(DS_LEFT_MOTOR_ADDR, SNF_ENABLE);
-    HAL_Delay(1U);
-    (void)Motor_Stop(DS_RIGHT_MOTOR_ADDR, SNF_ENABLE);
-    HAL_Delay(1U);
-    (void)Motor_SyncStart();
+    uint8_t attempt;
+
+    /*
+     * A lap can complete immediately after Motor_SyncStart(), while the
+     * drivers may still be replying on the shared bus. Leave a turnaround
+     * interval before the first stop command, then use immediate stops
+     * instead of queued synchronized stops. Send both commands twice so a
+     * single lost frame cannot leave one wheel running indefinitely.
+     */
+    HAL_Delay(DS_MOTOR_STOP_GAP_MS);
+    for (attempt = 0U;
+         attempt < DS_CHASSIS_STOP_RETRY_COUNT;
+         attempt++) {
+        (void)Motor_Stop(DS_LEFT_MOTOR_ADDR, SNF_DISABLE);
+        HAL_Delay(DS_MOTOR_STOP_GAP_MS);
+        (void)Motor_Stop(DS_RIGHT_MOTOR_ADDR, SNF_DISABLE);
+        HAL_Delay(DS_MOTOR_STOP_GAP_MS);
+    }
 }
 
 HAL_StatusTypeDef DS_BalanceSetSpeed(int32_t speed, uint8_t slope)
@@ -318,9 +365,9 @@ HAL_StatusTypeDef DS_BalanceMoveRelative(int32_t pulses,
                                  SNF_DISABLE);
 }
 
-void DS_BalanceStop(void)
+HAL_StatusTypeDef DS_BalanceStop(void)
 {
-    (void)Motor_Stop(DS_BALANCE_MOTOR_ADDR, SNF_DISABLE);
+    return Motor_Stop(DS_BALANCE_MOTOR_ADDR, SNF_DISABLE);
 }
 
 HAL_StatusTypeDef DS_BalanceRequestPosition(void)

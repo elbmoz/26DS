@@ -15,6 +15,7 @@
 /* USER CODE BEGIN Includes */
 #include "DS.h"
 #include "DS_task.h"
+#include "BallVision.h"
 #include "HWT101.h"
 #include "serial.h"
 #include "zhangdatou.h"
@@ -39,6 +40,7 @@ int main(void)
   MX_UART5_Init();
   MX_USART1_UART_Init();
   MX_USART2_UART_Init();
+  MX_USART6_UART_Init();
 
   /* USER CODE BEGIN 2 */
   MX_TIM2_Init();
@@ -152,6 +154,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
   Motor_UART_RxCpltCallback(huart);
   serial_Handler(huart);
   hwt_Handler(huart);
+  BallVision_UART_RxCpltCallback(huart);
 }
 
 void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
@@ -159,6 +162,7 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
   Motor_UART_ErrorCallback(huart);
   serial_ErrorHandler(huart);
   HWT101_UART_ErrorCallback(huart);
+  BallVision_UART_ErrorCallback(huart);
 }
 /* USER CODE END 4 */
 

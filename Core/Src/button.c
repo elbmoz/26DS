@@ -27,13 +27,13 @@ void Button_Init(void)
     GPIO_InitTypeDef GPIO_InitStruct = {0};
     uint8_t index;
 
-    __HAL_RCC_GPIOC_CLK_ENABLE();
+    __HAL_RCC_GPIOB_CLK_ENABLE();
 
     GPIO_InitStruct.Pin = BUTTON_1_GPIO_PIN | BUTTON_2_GPIO_PIN;
     GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
     GPIO_InitStruct.Pull = GPIO_PULLUP;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-    HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
     for (index = 0U; index < BUTTON_ID_COUNT; index++) {
         uint8_t pressed = Button_ReadPressed(&button_channels[index]);

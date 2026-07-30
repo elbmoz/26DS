@@ -7,9 +7,9 @@ extern "C" {
 
 #include "stm32f4xx_hal.h"
 
-#define BUTTON_1_GPIO_PORT         GPIOC
+#define BUTTON_1_GPIO_PORT         GPIOB
 #define BUTTON_1_GPIO_PIN          GPIO_PIN_6
-#define BUTTON_2_GPIO_PORT         GPIOC
+#define BUTTON_2_GPIO_PORT         GPIOB
 #define BUTTON_2_GPIO_PIN          GPIO_PIN_7
 #define BUTTON_DEBOUNCE_MS         20U
 

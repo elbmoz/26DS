@@ -1,5 +1,7 @@
 #include "DS_task.h"
 
+#include "BalanceControl.h"
+#include "BallVision.h"
 #include "DS.h"
 #include "LineFollow.h"
 #include "OLED.h"
@@ -75,6 +77,17 @@ static void DS_Task_ShowTime(uint32_t elapsed_ms)
     OLED_ShowChar(2U, 12U, 's');
 }
 
+static void DS_Task_ShowTimeOnLine(uint8_t line, uint32_t elapsed_ms)
+{
+    uint32_t seconds = (elapsed_ms / 1000U) % 10000U;
+    uint32_t tenths = (elapsed_ms / 100U) % 10U;
+
+    OLED_ShowNum(line, 6U, seconds, 4U);
+    OLED_ShowChar(line, 10U, '.');
+    OLED_ShowNum(line, 11U, tenths, 1U);
+    OLED_ShowChar(line, 12U, 's');
+}
+
 static void DS_Task_ShowSensorBits(uint8_t sensor_bits)
 {
     uint8_t index;
@@ -108,6 +121,15 @@ static void DS_Task_ShowQuestion1(void)
     DS_Task_ShowImuLine();
 }
 
+static void DS_Task_ShowQuestion2(void)
+{
+    OLED_Clear();
+    OLED_ShowString(1U, 1U, "Q2 BALL CENTER");
+    OLED_ShowString(2U, 1U, "P:+000.0 T:+000X");
+    OLED_ShowString(3U, 1U, "E:+000.0 O:+000");
+    OLED_ShowString(4U, 1U, "TIME:0000.0s");
+}
+
 static void DS_Task_ShowFinished(void)
 {
     OLED_Clear();
@@ -116,6 +138,20 @@ static void DS_Task_ShowFinished(void)
     DS_Task_ShowTime(ds_task.elapsed_ms);
     OLED_ShowString(3U, 1U, "K2:MENU");
     DS_Task_ShowImuLine();
+}
+
+static void DS_Task_ShowQuestion2Finished(void)
+{
+    OLED_Clear();
+    OLED_ShowString(1U, 1U, "Q2 STOPPED");
+    OLED_ShowString(2U, 1U, "TIME:0000.0s");
+    DS_Task_ShowTime(ds_task.elapsed_ms);
+    OLED_ShowString(3U, 1U, "K2:MENU");
+    OLED_ShowString(4U, 1U, "P:+000.0");
+    DS_Task_ShowSignedFixedOne(
+        4U,
+        3U,
+        balance_control_state.ball_position);
 }
 
 static void DS_Task_ShowNotReady(void)
@@ -148,6 +184,28 @@ static void DS_Task_StartQuestion1(void)
     LineFollow_Start();
 }
 
+static void DS_Task_FinishQuestion2(uint32_t now)
+{
+    BalanceControl_Stop();
+    BallVision_StopStream();
+    ds_task.elapsed_ms = now - ds_task.start_ms;
+    ds_task.state = DS_TASK_FINISHED;
+    DS_Task_ShowQuestion2Finished();
+}
+
+static void DS_Task_StartQuestion2(void)
+{
+    ds_task.state = DS_TASK_RUNNING_Q2;
+    ds_task.start_ms = HAL_GetTick();
+    ds_task.elapsed_ms = 0U;
+    ds_task_last_display_ms = ds_task.start_ms -
+                              DS_TASK_DISPLAY_PERIOD_MS;
+
+    DS_Task_ShowQuestion2();
+    BallVision_StartStream();
+    BalanceControl_Start(0.0f);
+}
+
 static void DS_Task_UpdateQuestion1Display(uint32_t now)
 {
     if ((uint32_t)(now - ds_task_last_display_ms) <
@@ -161,9 +219,52 @@ static void DS_Task_UpdateQuestion1Display(uint32_t now)
     DS_Task_UpdateImuValues();
 }
 
+static void DS_Task_UpdateQuestion2Display(uint32_t now)
+{
+    int32_t output;
+    int32_t target;
+
+    if ((uint32_t)(now - ds_task_last_display_ms) <
+        DS_TASK_DISPLAY_PERIOD_MS) {
+        return;
+    }
+
+    ds_task_last_display_ms = now;
+    DS_Task_ShowSignedFixedOne(
+        2U,
+        3U,
+        balance_control_state.ball_position);
+
+    target = DS_Task_Clamp(
+        (int32_t)balance_control_state.target_position,
+        -999,
+        999);
+    OLED_ShowSignedNum(2U, 12U, target, 3U);
+    OLED_ShowChar(
+        2U,
+        16U,
+        (balance_control_state.vision_valid != 0U) ? 'V' : 'X');
+
+    DS_Task_ShowSignedFixedOne(
+        3U,
+        3U,
+        balance_control_state.position_error);
+    output = DS_Task_Clamp(
+        balance_control_state.motor_command,
+        -999,
+        999);
+    OLED_ShowSignedNum(3U, 12U, output, 3U);
+    OLED_ShowChar(
+        1U,
+        16U,
+        (BalanceControl_IsStable() != 0U) ? 'S' : 'R');
+    DS_Task_ShowTimeOnLine(4U, ds_task.elapsed_ms);
+}
+
 static void DS_Task_UpdatePassiveImuDisplay(uint32_t now)
 {
     if (ds_task.state == DS_TASK_RUNNING_Q1 ||
+        ds_task.state == DS_TASK_RUNNING_Q2 ||
         (uint32_t)(now - ds_task_last_display_ms) <
         DS_TASK_DISPLAY_PERIOD_MS) {
         return;
@@ -187,6 +288,7 @@ void DS_Task_Init(void)
         oled_status = OLED_TestAllPixels(1000U);
     }
     LineFollow_Init();
+    BalanceControl_Init();
 
     ds_task.state = DS_TASK_MENU;
     ds_task.selected_question = 0U;
@@ -224,6 +326,8 @@ void DS_Task_Run(void)
         if (key2_clicked != 0U && ds_task.selected_question != 0U) {
             if (ds_task.selected_question == 1U) {
                 DS_Task_StartQuestion1();
+            } else if (ds_task.selected_question == 2U) {
+                DS_Task_StartQuestion2();
             } else {
                 ds_task.state = DS_TASK_NOT_READY;
                 DS_Task_ShowNotReady();
@@ -242,6 +346,18 @@ void DS_Task_Run(void)
         }
 
         DS_Task_UpdateQuestion1Display(now);
+        break;
+
+    case DS_TASK_RUNNING_Q2:
+        BalanceControl_Update();
+        ds_task.elapsed_ms = now - ds_task.start_ms;
+
+        if (key2_clicked != 0U) {
+            DS_Task_FinishQuestion2(now);
+            break;
+        }
+
+        DS_Task_UpdateQuestion2Display(now);
         break;
 
     case DS_TASK_FINISHED:
@@ -264,8 +380,14 @@ void DS_Task_Run(void)
 
 void DS_Task_Stop(void)
 {
-    LineFollow_Stop();
-    if (ds_task.state == DS_TASK_RUNNING_Q1) {
+    if (ds_task.state == DS_TASK_RUNNING_Q2) {
+        BalanceControl_Stop();
+        BallVision_StopStream();
+    } else {
+        LineFollow_Stop();
+    }
+    if (ds_task.state == DS_TASK_RUNNING_Q1 ||
+        ds_task.state == DS_TASK_RUNNING_Q2) {
         ds_task.elapsed_ms = HAL_GetTick() - ds_task.start_ms;
     }
     ds_task.state = DS_TASK_FINISHED;

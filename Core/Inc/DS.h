@@ -51,6 +51,7 @@ extern "C" {
 /* Most digital line sensors assert low. Set to 0U if the selected board asserts high. */
 #define DS_IR_ACTIVE_LOW               1U
 #define DS_VISION_TIMEOUT_MS           200U
+#define DS_BALL_VISION_TIMEOUT_MS      200U
 #define DS_IMU_TIMEOUT_MS              200U
 
 typedef struct
@@ -66,6 +67,12 @@ typedef struct
     volatile uint8_t vision_valid;
     volatile uint32_t vision_frame_count;
     volatile uint32_t vision_last_rx_ms;
+
+    /* Question 2 ball position relative to the rod center. */
+    volatile float ball_position;
+    volatile uint8_t ball_vision_valid;
+    volatile uint32_t ball_vision_frame_count;
+    volatile uint32_t ball_vision_last_rx_ms;
 
     volatile float yaw_deg;
     volatile float gyro_y_dps;
@@ -85,6 +92,8 @@ uint8_t DS_IR_ReadActive(void);
 
 void DS_VisionUpdateFromISR(int32_t x_error, int32_t y_error, uint8_t valid);
 uint8_t DS_VisionIsFresh(void);
+void DS_BallVisionUpdateFromISR(float position, uint8_t valid);
+uint8_t DS_BallVisionIsFresh(void);
 
 void DS_MotorsEnable(void);
 void DS_MotorsDisable(void);
@@ -97,7 +106,7 @@ HAL_StatusTypeDef DS_BalanceSetSpeed(int32_t speed, uint8_t slope);
 HAL_StatusTypeDef DS_BalanceMoveRelative(int32_t pulses,
                                          uint16_t speed,
                                          uint8_t acceleration);
-void DS_BalanceStop(void);
+HAL_StatusTypeDef DS_BalanceStop(void);
 HAL_StatusTypeDef DS_BalanceRequestPosition(void);
 HAL_StatusTypeDef DS_BalanceReadPosition(int32_t *position, float *angle);
 

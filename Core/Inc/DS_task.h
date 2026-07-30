@@ -14,6 +14,7 @@ typedef enum
 {
     DS_TASK_MENU = 0,
     DS_TASK_RUNNING_Q1,
+    DS_TASK_RUNNING_Q2,
     DS_TASK_FINISHED,
     DS_TASK_NOT_READY
 } DS_TaskState;
