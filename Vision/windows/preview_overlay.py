@@ -122,6 +122,39 @@ def _draw_scene_overlay(frame, tracking, status, synchronized):
         )
 
     if tracking and synchronized:
+        valid_confidence = float(
+            ((status or {}).get("config") or {}).get(
+                "valid_confidence", 0.5
+            )
+        )
+        for box in tracking.get("ai_boxes") or ():
+            if not box or len(box) < 5:
+                continue
+            start = _scale_point(
+                box[:2], camera_size, (width, height)
+            )
+            end = _scale_point(
+                (box[0] + box[2], box[1] + box[3]),
+                camera_size,
+                (width, height),
+            )
+            if start and end:
+                confirmed = float(box[4]) >= valid_confidence
+                color = (0, 0, 255) if confirmed else (0, 200, 255)
+                cv2.rectangle(frame, start, end, color, 2)
+                cv2.putText(
+                    frame,
+                    "{} {:.0f}%".format(
+                        "AI" if confirmed else "AI?",
+                        100.0 * float(box[4]),
+                    ),
+                    (start[0], max(14, start[1] - 5)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.45,
+                    color,
+                    1,
+                    cv2.LINE_AA,
+                )
         for candidate in tracking.get("candidates") or ():
             if not candidate or len(candidate) < 2:
                 continue
@@ -230,7 +263,14 @@ def _put_text_fit(
     )
 
 
-def _draw_status_footer(canvas, video_height, tracking, recording, sync_info):
+def _draw_status_footer(
+    canvas,
+    video_height,
+    tracking,
+    status,
+    recording,
+    sync_info,
+):
     width = canvas.shape[1]
     footer_top = int(video_height)
     cv2.line(
@@ -285,12 +325,13 @@ def _draw_status_footer(canvas, video_height, tracking, recording, sync_info):
     if tracking:
         error_value = tracking.get("error_px")
         velocity_value = tracking.get("velocity_px_s")
-        pipe_text = (
-            "OK"
-            if tracking.get("pipe_valid")
-            else "STALE"
+        ai_mode = (status or {}).get("config", {}).get("algorithm") == "ai"
+        reference_text = (
+            "FIXED"
+            if ai_mode
+            else ("OK" if tracking.get("pipe_valid") else "STALE")
         )
-        detail = "fps={:.1f} det={}ms err={}px vel={}px/s pipe={}".format(
+        detail = "fps={:.1f} det={}ms err={}px vel={}px/s ref={}".format(
             float(tracking.get("fps") or 0),
             tracking.get("detect_ms", ""),
             "--" if error_value is None else error_value,
@@ -299,7 +340,7 @@ def _draw_status_footer(canvas, video_height, tracking, recording, sync_info):
                 if velocity_value is None
                 else "{:.0f}".format(float(velocity_value))
             ),
-            pipe_text,
+            reference_text,
         )
     else:
         detail = "waiting for synchronized telemetry"
@@ -369,6 +410,7 @@ def build_preview_frame(
         canvas,
         height,
         tracking,
+        status,
         bool(recording),
         sync_info,
     )

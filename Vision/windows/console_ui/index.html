@@ -106,21 +106,39 @@
         <figure class="wave-panel">
           <figcaption>
             <span><i class="legend-dot position"></i>位置</span>
-            <strong id="wave-position-value">—</strong>
+            <span class="wave-panel-actions">
+              <strong id="wave-position-value">—</strong>
+              <button class="chart-expand" type="button" data-chart-expand aria-label="全屏查看位置波形" title="全屏查看">
+                <svg class="expand-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10"/></svg>
+                <svg class="collapse-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2.5V6H2.5M13.5 6H10V2.5M10 13.5V10h3.5M2.5 10H6v3.5"/></svg>
+              </button>
+            </span>
           </figcaption>
           <canvas id="position-chart" aria-label="钢球位置历史波形"></canvas>
         </figure>
         <figure class="wave-panel">
           <figcaption>
             <span><i class="legend-dot velocity"></i>速度</span>
-            <strong id="wave-velocity-value">—</strong>
+            <span class="wave-panel-actions">
+              <strong id="wave-velocity-value">—</strong>
+              <button class="chart-expand" type="button" data-chart-expand aria-label="全屏查看速度波形" title="全屏查看">
+                <svg class="expand-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10"/></svg>
+                <svg class="collapse-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2.5V6H2.5M13.5 6H10V2.5M10 13.5V10h3.5M2.5 10H6v3.5"/></svg>
+              </button>
+            </span>
           </figcaption>
           <canvas id="velocity-chart" aria-label="钢球速度历史波形"></canvas>
         </figure>
         <figure class="wave-panel">
           <figcaption>
             <span><i class="legend-dot fps"></i>识别帧率</span>
-            <strong id="wave-fps-value">—</strong>
+            <span class="wave-panel-actions">
+              <strong id="wave-fps-value">—</strong>
+              <button class="chart-expand" type="button" data-chart-expand aria-label="全屏查看识别帧率波形" title="全屏查看">
+                <svg class="expand-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10"/></svg>
+                <svg class="collapse-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2.5V6H2.5M13.5 6H10V2.5M10 13.5V10h3.5M2.5 10H6v3.5"/></svg>
+              </button>
+            </span>
           </figcaption>
           <canvas id="fps-chart" aria-label="识别帧率历史波形"></canvas>
         </figure>
@@ -130,7 +148,13 @@
               <span><i class="legend-dot detect"></i>检测</span>
               <span><i class="legend-dot latency"></i>图传</span>
             </span>
-            <strong id="wave-timing-value">—</strong>
+            <span class="wave-panel-actions">
+              <strong id="wave-timing-value">—</strong>
+              <button class="chart-expand" type="button" data-chart-expand aria-label="全屏查看耗时波形" title="全屏查看">
+                <svg class="expand-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10"/></svg>
+                <svg class="collapse-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2.5V6H2.5M13.5 6H10V2.5M10 13.5V10h3.5M2.5 10H6v3.5"/></svg>
+              </button>
+            </span>
           </figcaption>
           <canvas id="timing-chart" aria-label="识别耗时与图传延迟历史波形"></canvas>
         </figure>
@@ -163,7 +187,7 @@
       <dl class="status-list">
         <div><dt>真实检测点</dt><dd id="status-measured">—</dd></div>
         <div><dt>控制输出有效</dt><dd id="status-valid">—</dd></div>
-        <div><dt>管道姿态</dt><dd id="status-pipe">—</dd></div>
+        <div><dt id="status-reference-label">坐标参考</dt><dd id="status-pipe">—</dd></div>
         <div><dt>横向偏差</dt><dd id="status-lateral">—</dd></div>
         <div><dt>目标误差</dt><dd id="status-error">—</dd></div>
         <div><dt>视频 / 遥测同步</dt><dd id="status-sync">—</dd></div>

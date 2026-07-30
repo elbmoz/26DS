@@ -61,6 +61,14 @@ def _status_packet(
     detector,
     tracker,
 ):
+    if tracker is None and hasattr(detector, "pipe"):
+        roi = detector.pipe.roi
+        axis_start = detector.pipe.axis.start.tuple()
+        axis_end = detector.pipe.axis.end.tuple()
+    else:
+        roi = detector.full_roi
+        axis_start = tracker.axis_start
+        axis_end = tracker.axis_end
     return make_status_packet(
         session_id=session_id,
         sequence=sequence,
@@ -72,9 +80,9 @@ def _status_packet(
         stream_size=(cfg.STREAM_WIDTH, cfg.STREAM_HEIGHT),
         stream_fps=cfg.STREAM_FPS,
         stream_bitrate=cfg.STREAM_BITRATE,
-        roi=detector.full_roi,
-        axis_start=tracker.axis_start,
-        axis_end=tracker.axis_end,
+        roi=roi,
+        axis_start=axis_start,
+        axis_end=axis_end,
         current_config=config_snapshot(detector, tracker),
         network_errors=link.send_errors,
         control_errors=link.control_errors,

@@ -393,7 +393,12 @@ class MaixCamDeviceManager:
         self._mkdirs(RUNTIME_DIR)
         command = (
             "cd {current} && "
-            "nohup python3 -u main.py </dev/null >{log} 2>&1 & "
+            # MaixCAM's launcher daemon remains active for SSH-started apps
+            # and can consume about a quarter of the single CPU. Give the
+            # control-critical vision loop scheduling priority while leaving
+            # the launcher alive and responsive.
+            "nohup nice -n -5 python3 -u main.py "
+            "</dev/null >{log} 2>&1 & "
             "pid=$!; echo $pid >{pid_tmp}; mv {pid_tmp} {pid_file}; echo $pid"
         ).format(
             current=CURRENT_LINK,

@@ -678,4 +678,5 @@ class LabBallDetector:
             "search_roi": search_roi,
             "raw_count": raw_count,
             "fell_back": fell_back,
+            "used_local": used_local,
         }

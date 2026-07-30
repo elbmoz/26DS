@@ -38,12 +38,14 @@ let telemetryRateCount = 0;
 let telemetryRateStartedMs = 0;
 let lastTelemetryKey = "";
 let lastTelemetrySession = "";
+let lastTelemetrySeq = null;
 let historyWindowMs = 30000;
 let chartPanOffsetMs = 0;
 let chartHoverTimeMs = null;
 let chartDragging = false;
 let chartDragStartX = 0;
 let chartDragStartPanMs = 0;
+let expandedChartPanel = null;
 let chartsDirty = true;
 let lastHistoryPruneMs = 0;
 const telemetryHistory = [];
@@ -123,8 +125,8 @@ function appendTelemetrySample(
   if (!tracking || tracking.seq == null) return;
 
   const session = String(tracking.session || "");
+  const sequence = Number(tracking.seq);
   const key = `${session}:${tracking.seq}`;
-  if (key === lastTelemetryKey) return;
   const previousLatestTime = telemetryHistory.length
     ? telemetryHistory[telemetryHistory.length - 1].t
     : null;
@@ -133,10 +135,22 @@ function appendTelemetrySample(
     chartPanOffsetMs = 0;
     chartHoverTimeMs = null;
     lastHistoryPruneMs = 0;
+    lastTelemetrySeq = null;
     updateChartLiveState();
+  }
+  if (session === lastTelemetrySession) {
+    if (
+      Number.isFinite(sequence) &&
+      lastTelemetrySeq != null &&
+      sequence <= lastTelemetrySeq
+    ) {
+      return;
+    }
+    if (!Number.isFinite(sequence) && key === lastTelemetryKey) return;
   }
   lastTelemetrySession = session;
   lastTelemetryKey = key;
+  lastTelemetrySeq = Number.isFinite(sequence) ? sequence : null;
 
   const valid = Boolean(tracking.valid);
   const now = Number.isFinite(Number(sampleTimeMs))
@@ -208,9 +222,12 @@ function renderLiveTelemetry(
   video = {},
   config = {},
   sampleTimeMs = Date.now(),
+  appendHistory = true,
 ) {
-  appendTelemetrySample(tracking, video, config, sampleTimeMs);
-  renderSimulator(tracking, config);
+  if (appendHistory) {
+    appendTelemetrySample(tracking, video, config, sampleTimeMs);
+    renderSimulator(tracking, config);
+  }
 
   text("metric-fps", formatNumber(tracking.fps, 1));
   text("metric-detect", formatNumber(tracking.detect_ms, 0));
@@ -427,6 +444,152 @@ function formatTimeLabel(time, includeMilliseconds = false) {
     : base;
 }
 
+function niceAxisStep(span, targetIntervals = 5) {
+  const roughStep =
+    Math.max(Number.EPSILON, span) /
+    Math.max(1, targetIntervals);
+  const magnitude = 10 ** Math.floor(Math.log10(roughStep));
+  const normalized = roughStep / magnitude;
+  let multiplier = 10;
+  if (normalized <= 1) multiplier = 1;
+  else if (normalized <= 2) multiplier = 2;
+  else if (normalized <= 2.5) multiplier = 2.5;
+  else if (normalized <= 7.5) multiplier = 5;
+  return multiplier * magnitude;
+}
+
+function buildAxisTicks(minimum, maximum, step) {
+  const ticks = [];
+  const count = Math.min(
+    10,
+    Math.max(1, Math.round((maximum - minimum) / step)),
+  );
+  for (let index = 0; index <= count; index += 1) {
+    const value = minimum + step * index;
+    ticks.push(Math.abs(value) < step * 1e-6 ? 0 : value);
+  }
+  return ticks;
+}
+
+function resolveChartAxis(samples, options) {
+  const axis = options.axis || {};
+  if (axis.fixed) {
+    const minimum = Number(axis.minimum);
+    const maximum = Number(axis.maximum);
+    const step =
+      Number(axis.step) ||
+      niceAxisStep(maximum - minimum);
+    return {
+      minimum,
+      maximum,
+      step,
+      ticks: buildAxisTicks(minimum, maximum, step),
+    };
+  }
+
+  const values = [];
+  for (const sample of samples) {
+    for (const series of options.series) {
+      const value = sample[series.key];
+      if (Number.isFinite(value)) values.push(value);
+    }
+  }
+  if (!values.length) {
+    const minimum = Number(axis.fallbackMinimum ?? 0);
+    const maximum = Number(axis.fallbackMaximum ?? 1);
+    const step = niceAxisStep(maximum - minimum);
+    return {
+      minimum,
+      maximum,
+      step,
+      ticks: buildAxisTicks(minimum, maximum, step),
+    };
+  }
+
+  if (axis.includeReference && Number.isFinite(options.reference)) {
+    values.push(options.reference);
+  }
+  let minimum = Math.min(...values);
+  let maximum = Math.max(...values);
+  const minimumSpan = Math.max(
+    Number.EPSILON,
+    Number(axis.minimumSpan) || 1,
+  );
+
+  if (axis.symmetric) {
+    const limit = Math.max(
+      Math.abs(minimum),
+      Math.abs(maximum),
+      minimumSpan / 2,
+    );
+    minimum = -limit;
+    maximum = limit;
+  } else if (maximum - minimum < minimumSpan) {
+    const center = (minimum + maximum) / 2;
+    minimum = center - minimumSpan / 2;
+    maximum = center + minimumSpan / 2;
+  }
+
+  const padding =
+    (maximum - minimum) *
+    Math.max(0, Number(axis.paddingFraction) || 0.08);
+  minimum -= padding;
+  maximum += padding;
+  if (axis.includeZero) {
+    minimum = Math.min(0, minimum);
+    maximum = Math.max(0, maximum);
+  }
+  if (Number.isFinite(axis.hardMinimum)) {
+    minimum = Math.max(Number(axis.hardMinimum), minimum);
+  }
+  if (Number.isFinite(axis.hardMaximum)) {
+    maximum = Math.min(Number(axis.hardMaximum), maximum);
+  }
+
+  const step = niceAxisStep(maximum - minimum);
+  if (axis.symmetric) {
+    const limit =
+      Math.ceil(
+        Math.max(Math.abs(minimum), Math.abs(maximum)) / step,
+      ) * step;
+    minimum = -limit;
+    maximum = limit;
+  } else {
+    minimum = Math.floor(minimum / step) * step;
+    maximum = Math.ceil(maximum / step) * step;
+  }
+  if (Number.isFinite(axis.hardMinimum)) {
+    minimum = Math.max(Number(axis.hardMinimum), minimum);
+  }
+  if (Number.isFinite(axis.hardMaximum)) {
+    maximum = Math.min(Number(axis.hardMaximum), maximum);
+  }
+  if (maximum <= minimum) maximum = minimum + step;
+  return {
+    minimum,
+    maximum,
+    step,
+    ticks: buildAxisTicks(minimum, maximum, step),
+  };
+}
+
+function formatAxisNumber(value, step) {
+  if (Math.abs(value) < step * 1e-6) return "0";
+  let decimals = 0;
+  if (step < 1) {
+    decimals = Math.min(
+      3,
+      Math.max(1, Math.ceil(-Math.log10(step))),
+    );
+  } else if (!Number.isInteger(step)) {
+    decimals = 1;
+  }
+  const formatted = value.toFixed(decimals);
+  return decimals
+    ? formatted.replace(/\.?0+$/, "")
+    : formatted;
+}
+
 function buildSeriesPoints(samples, key, maxBuckets) {
   const groupSize = Math.max(
     1,
@@ -638,8 +801,12 @@ function drawWaveChart(canvas, samples, range, options) {
   const padding = { left: 35, right: 9, top: 7, bottom: 19 };
   const plotWidth = Math.max(1, width - padding.left - padding.right);
   const plotHeight = Math.max(1, height - padding.top - padding.bottom);
-  const minimum = options.minimum;
-  const maximum = Math.max(minimum + 0.001, options.maximum);
+  const axis = resolveChartAxis(samples, options);
+  const minimum = axis.minimum;
+  const maximum = axis.maximum;
+  canvas.dataset.axisMinimum = String(minimum);
+  canvas.dataset.axisMaximum = String(maximum);
+  canvas.dataset.axisStep = String(axis.step);
   const mapX = (time) =>
     padding.left +
     ((time - range.startTime) / historyWindowMs) * plotWidth;
@@ -650,8 +817,8 @@ function drawWaveChart(canvas, samples, range, options) {
   context.save();
   context.strokeStyle = chartColors.grid;
   context.lineWidth = 1;
-  for (let row = 0; row <= 4; row += 1) {
-    const y = padding.top + (plotHeight * row) / 4;
+  for (const tick of axis.ticks) {
+    const y = mapY(tick);
     context.beginPath();
     context.moveTo(padding.left, y);
     context.lineTo(padding.left + plotWidth, y);
@@ -667,16 +834,20 @@ function drawWaveChart(canvas, samples, range, options) {
   context.fillStyle = chartColors.axis;
   context.font = '9px "Cascadia Mono", Consolas, monospace';
   context.textAlign = "right";
-  context.fillText(
-    options.formatAxis(maximum),
-    padding.left - 5,
-    padding.top + 7,
-  );
-  context.fillText(
-    options.formatAxis(minimum),
-    padding.left - 5,
-    padding.top + plotHeight,
-  );
+  context.textBaseline = "middle";
+  for (const tick of axis.ticks) {
+    const y = clamp(
+      mapY(tick),
+      padding.top + 4,
+      padding.top + plotHeight - 4,
+    );
+    context.fillText(
+      options.formatAxis(tick, axis.step),
+      padding.left - 5,
+      y,
+    );
+  }
+  context.textBaseline = "alphabetic";
   context.textAlign = "left";
   context.fillText(
     formatTimeLabel(range.startTime),
@@ -701,16 +872,30 @@ function drawWaveChart(canvas, samples, range, options) {
   );
   context.restore();
 
-  drawReference(
-    context,
+  context.save();
+  context.beginPath();
+  context.rect(
     padding.left,
     padding.top,
     plotWidth,
     plotHeight,
-    options.reference,
-    minimum,
-    maximum,
   );
+  context.clip();
+  if (
+    options.reference >= minimum &&
+    options.reference <= maximum
+  ) {
+    drawReference(
+      context,
+      padding.left,
+      padding.top,
+      plotWidth,
+      plotHeight,
+      options.reference,
+      minimum,
+      maximum,
+    );
+  }
   for (const series of options.series) {
     drawSeries(
       context,
@@ -721,6 +906,7 @@ function drawWaveChart(canvas, samples, range, options) {
       plotWidth,
     );
   }
+  context.restore();
   drawChartOverlay(
     context,
     samples,
@@ -733,43 +919,20 @@ function drawWaveChart(canvas, samples, range, options) {
   );
 }
 
-function maximumFinite(values, fallback) {
-  let maximum = fallback;
-  for (const value of values) {
-    if (Number.isFinite(value)) maximum = Math.max(maximum, value);
-  }
-  return maximum;
-}
-
 function renderCharts() {
   const range = chartViewRange();
   const samples = historyForCurrentWindow(range);
-  const absoluteVelocity = samples.map((sample) =>
-    Math.abs(sample.velocity ?? 0),
-  );
-  const velocityMaximum = maximumFinite(absoluteVelocity, 0);
-  const velocityLimit = Math.max(
-    100,
-    Math.min(800, Math.ceil(velocityMaximum / 100) * 100),
-  );
-  const timingValues = [];
-  for (const sample of samples) {
-    timingValues.push(sample.detect, sample.latency);
-  }
-  const timingMaximum = Math.max(
-    100,
-    Math.min(
-      500,
-      Math.ceil(maximumFinite(timingValues, 0) / 50) * 50,
-    ),
-  );
   const target = samples.length
     ? samples[samples.length - 1].target
     : 0.5;
 
   drawWaveChart($("#position-chart"), samples, range, {
-    minimum: 0,
-    maximum: 1,
+    axis: {
+      fixed: true,
+      minimum: 0,
+      maximum: 1,
+      step: 0.25,
+    },
     reference: target ?? 0.5,
     formatAxis: (value) => `${Math.round(value * 100)}%`,
     series: [
@@ -783,10 +946,16 @@ function renderCharts() {
     ],
   });
   drawWaveChart($("#velocity-chart"), samples, range, {
-    minimum: -velocityLimit,
-    maximum: velocityLimit,
+    axis: {
+      symmetric: true,
+      includeZero: true,
+      includeReference: true,
+      minimumSpan: 40,
+      fallbackMinimum: -100,
+      fallbackMaximum: 100,
+    },
     reference: 0,
-    formatAxis: (value) => `${Math.round(value)}`,
+    formatAxis: formatAxisNumber,
     series: [
       {
         key: "velocity",
@@ -798,10 +967,14 @@ function renderCharts() {
     ],
   });
   drawWaveChart($("#fps-chart"), samples, range, {
-    minimum: 0,
-    maximum: 60,
+    axis: {
+      minimumSpan: 10,
+      hardMinimum: 0,
+      fallbackMinimum: 0,
+      fallbackMaximum: 60,
+    },
     reference: 30,
-    formatAxis: (value) => `${Math.round(value)}`,
+    formatAxis: formatAxisNumber,
     series: [
       {
         key: "fps",
@@ -813,10 +986,15 @@ function renderCharts() {
     ],
   });
   drawWaveChart($("#timing-chart"), samples, range, {
-    minimum: 0,
-    maximum: timingMaximum,
+    axis: {
+      includeZero: true,
+      minimumSpan: 20,
+      hardMinimum: 0,
+      fallbackMinimum: 0,
+      fallbackMaximum: 100,
+    },
     reference: null,
-    formatAxis: (value) => `${Math.round(value)}`,
+    formatAxis: formatAxisNumber,
     series: [
       {
         key: "detect",
@@ -963,6 +1141,51 @@ function installChartInteraction(canvas) {
   canvas.addEventListener("dblclick", returnChartsToLive);
 }
 
+function setExpandedChart(panel) {
+  const nextPanel =
+    panel && panel !== expandedChartPanel ? panel : null;
+  if (expandedChartPanel) {
+    const previousButton =
+      expandedChartPanel.querySelector("[data-chart-expand]");
+    expandedChartPanel.classList.remove("expanded");
+    if (previousButton) {
+      previousButton.setAttribute("aria-expanded", "false");
+      previousButton.setAttribute(
+        "aria-label",
+        previousButton.dataset.openLabel ||
+          "全屏查看波形",
+      );
+      previousButton.title = "全屏查看";
+    }
+  }
+
+  expandedChartPanel = nextPanel;
+  document.body.classList.toggle(
+    "chart-expanded",
+    Boolean(expandedChartPanel),
+  );
+  if (expandedChartPanel) {
+    const button =
+      expandedChartPanel.querySelector("[data-chart-expand]");
+    expandedChartPanel.classList.add("expanded");
+    if (button) {
+      button.dataset.openLabel =
+        button.dataset.openLabel ||
+        button.getAttribute("aria-label") ||
+        "全屏查看波形";
+      button.setAttribute("aria-label", "退出波形全屏");
+      button.setAttribute("aria-expanded", "true");
+      button.title = "退出全屏";
+      button.focus({ preventScroll: true });
+    }
+  }
+
+  chartsDirty = true;
+  window.requestAnimationFrame(() => {
+    chartsDirty = true;
+  });
+}
+
 async function action(name, body = {}) {
   const response = await fetch("/api/action", {
     method: "POST",
@@ -1015,11 +1238,22 @@ function renderState(state) {
   const config = monitor?.config || {};
 
   ensureTelemetryStream(monitor);
-  renderLiveTelemetry(tracking, video, config);
+  // The 300 ms state poll can lag several packets behind the 30 Hz SSE
+  // stream. It refreshes status cards only; feeding it into the chart or the
+  // position simulator would periodically insert an older position between
+  // two live samples.
+  renderLiveTelemetry(tracking, video, config, Date.now(), false);
 
   text("status-measured", boolLabel(tracking.measured, "检测到", "未检测"));
   text("status-valid", boolLabel(tracking.valid, "有效", "无效"));
-  text("status-pipe", boolLabel(tracking.pipe_valid, "稳定", "失效"));
+  const aiMode = config.algorithm === "ai";
+  text("status-reference-label", aiMode ? "坐标参考" : "管道姿态");
+  text(
+    "status-pipe",
+    aiMode
+      ? "固定安装标定"
+      : boolLabel(tracking.pipe_valid, "稳定", "失效"),
+  );
   text("status-lateral", tracking.lateral_px == null ? "—" : `${formatNumber(tracking.lateral_px, 1)} px`);
   text("status-error", tracking.error_px == null ? "—" : `${formatNumber(tracking.error_px, 1)} px`);
   text("status-sync", sync.match_delta_ms == null ? "—" : `${formatNumber(sync.match_delta_ms, 1)} ms`);
@@ -1058,6 +1292,7 @@ function renderState(state) {
       button.id === "inspector-toggle" ||
       button.id === "inspector-close" ||
       button.id === "chart-live" ||
+      button.classList.contains("chart-expand") ||
       button.dataset.windowSeconds
     ) {
       return;
@@ -1068,7 +1303,10 @@ function renderState(state) {
   const fingerprint = JSON.stringify(config);
   if (!formDirty && fingerprint !== configFingerprint) {
     for (const input of ui.form.elements) {
-      if (input.name && config[input.name] != null) input.value = config[input.name];
+      if (!input.name) continue;
+      const available = config[input.name] != null;
+      input.disabled = config.algorithm === "v2" && !available;
+      input.value = available ? config[input.name] : "";
     }
     configFingerprint = fingerprint;
   }
@@ -1149,7 +1387,12 @@ $("#inspector-toggle").addEventListener("click", () => setInspectorOpen(true));
 $("#inspector-close").addEventListener("click", () => setInspectorOpen(false));
 $("#inspector-backdrop").addEventListener("click", () => setInspectorOpen(false));
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") setInspectorOpen(false);
+  if (event.key !== "Escape") return;
+  if (expandedChartPanel) {
+    setExpandedChart(null);
+    return;
+  }
+  setInspectorOpen(false);
 });
 
 $("#preview-button").addEventListener("click", () => requestAction("preview", {}, "正在连接低延迟预览"));
@@ -1174,6 +1417,12 @@ $$("[data-window-seconds]").forEach((button) => {
 
 $("#chart-live").addEventListener("click", returnChartsToLive);
 $$(".wave-panel canvas").forEach(installChartInteraction);
+$$("[data-chart-expand]").forEach((button) => {
+  button.setAttribute("aria-expanded", "false");
+  button.addEventListener("click", () => {
+    setExpandedChart(button.closest(".wave-panel"));
+  });
+});
 
 ui.form.addEventListener("input", () => {
   formDirty = true;

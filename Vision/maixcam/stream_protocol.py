@@ -108,6 +108,33 @@ def validate_parameters(params):
 
 
 def config_snapshot(detector, tracker):
+    if tracker is None and detector.__class__.__name__ == "AIBallDetector":
+        return {
+            "algorithm": "ai",
+            "model": detector.config.model_path,
+            "target_position": _rounded(
+                detector.config.target_position
+            ),
+            "confidence": _rounded(detector.config.confidence),
+            "valid_confidence": _rounded(
+                detector.config.valid_confidence
+            ),
+            "iou": _rounded(detector.config.iou),
+            "input_size": [
+                int(detector.input_width),
+                int(detector.input_height),
+            ],
+        }
+    if tracker is None and hasattr(detector, "config"):
+        return {
+            "algorithm": "v2",
+            "target_position": _rounded(
+                detector.config.target_position
+            ),
+            "ball_diameter_px": _rounded(
+                detector.config.ball_diameter_px
+            ),
+        }
     return {
         "target_position": _rounded(tracker.target_position),
         "position_alpha": _rounded(tracker.position_alpha),
@@ -144,6 +171,42 @@ def config_snapshot(detector, tracker):
 
 def apply_parameters(clean, detector, tracker, config_module):
     """Apply already validated parameters and return the resulting snapshot."""
+    if tracker is None and detector.__class__.__name__ == "AIBallDetector":
+        unsupported = [
+            name for name in clean if name != "target_position"
+        ]
+        if unsupported:
+            raise ProtocolError(
+                "unsupported_parameter",
+                "AI only exposes target_position; rejected {}".format(
+                    ",".join(sorted(unsupported))
+                ),
+            )
+        if "target_position" in clean:
+            value = clean["target_position"]
+            detector.config.target_position = value
+            config_module.TARGET_POSITION = value
+        return config_snapshot(detector, tracker)
+
+    if tracker is None and hasattr(detector, "config"):
+        unsupported = [
+            name for name in clean if name != "target_position"
+        ]
+        if unsupported:
+            raise ProtocolError(
+                "unsupported_parameter",
+                "V2 only exposes target_position; rejected {}".format(
+                    ",".join(sorted(unsupported))
+                ),
+            )
+        if "target_position" in clean:
+            value = clean["target_position"]
+            detector.config.target_position = value
+            detector.tracker.target = value
+            config_module.TARGET_POSITION = value
+            config_module.V2_TARGET_POSITION = value
+        return config_snapshot(detector, tracker)
+
     if "target_position" in clean:
         value = clean["target_position"]
         tracker.target_position = value
@@ -277,9 +340,19 @@ def make_tracking_packet(
             [_rounded(value) for value in candidate[:4]]
             for candidate in detection["candidates"][:8]
         ],
+        "algorithm": str(detection.get("algorithm", "")),
+        "ai_boxes": [
+            [_rounded(value) for value in box[:6]]
+            for box in detection.get("boxes", ())[:8]
+        ],
         "local_search": bool(
-            tuple(detection["search_roi"])
-            != tuple(detection.get("full_roi", detection["search_roi"]))
+            detection.get(
+                "used_local",
+                tuple(detection["search_roi"])
+                != tuple(
+                    detection.get("full_roi", detection["search_roi"])
+                ),
+            )
         ),
         "fell_back": bool(detection["fell_back"]),
         "axis_x0": _rounded(axis_start[0]),

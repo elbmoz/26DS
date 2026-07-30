@@ -3,11 +3,13 @@
 from maix import app, camera, display, err, image, pinmap, time, uart
 
 import ball_config as cfg
+from ai_ball_detector import AIBallDetector, AIVisionConfig
 from ball_detector import LabBallDetector
 from ball_tracker_core import BallTracker
 from loop_timing import periodic_due
 from pipe_pose import GreenPipePoseDetector, TapeEndpointPipePoseDetector
 from stm32_link import Stm32Link
+from vision_v2 import BallVisionV2, VisionV2Config
 
 
 def init_uart():
@@ -59,6 +61,35 @@ def configure_camera(cam):
 
 
 def build_detector():
+    if cfg.VISION_ALGORITHM == "ai":
+        return AIBallDetector(
+            AIVisionConfig(
+                model_path=cfg.AI_MODEL_PATH,
+                frame_width=cfg.CAMERA_WIDTH,
+                frame_height=cfg.CAMERA_HEIGHT,
+                axis_start=cfg.AXIS_START,
+                axis_end=cfg.AXIS_END,
+                target_position=cfg.TARGET_POSITION,
+                confidence=cfg.AI_CONFIDENCE,
+                valid_confidence=cfg.AI_VALID_CONFIDENCE,
+                iou=cfg.AI_IOU,
+                coast_frames=cfg.AI_COAST_FRAMES,
+            )
+        )
+    if cfg.VISION_ALGORITHM == "v2":
+        return BallVisionV2(
+            VisionV2Config(
+                frame_width=cfg.CAMERA_WIDTH,
+                frame_height=cfg.CAMERA_HEIGHT,
+                left_endpoint=cfg.AXIS_START,
+                right_endpoint=cfg.AXIS_END,
+                right_search_roi=cfg.PIPE_TAPE_RIGHT_SEARCH_ROI,
+                pipe_thresholds=cfg.PIPE_TAPE_LAB_THRESHOLDS,
+                ball_thresholds=cfg.BALL_LAB_THRESHOLDS,
+                ball_diameter_px=cfg.V2_BALL_DIAMETER_PX,
+                target_position=cfg.V2_TARGET_POSITION,
+            )
+        )
     return LabBallDetector(
         frame_width=cfg.CAMERA_WIDTH,
         frame_height=cfg.CAMERA_HEIGHT,
@@ -131,6 +162,8 @@ def build_detector():
 
 
 def build_tracker():
+    if cfg.VISION_ALGORITHM in ("ai", "v2"):
+        return None
     return BallTracker(
         axis_start=cfg.AXIS_START,
         axis_end=cfg.AXIS_END,
@@ -174,6 +207,8 @@ def build_tracker():
 
 
 def build_pipe_detector():
+    if cfg.VISION_ALGORITHM in ("ai", "v2"):
+        return None
     if not cfg.PIPE_POSE_ENABLED:
         return None
     if cfg.PIPE_POSE_MODE == "right_tape":
@@ -256,6 +291,8 @@ def build_pipe_detector():
 
 def process_frame(img, now_ms, frame_id, detector, tracker, pipe_detector):
     """Update pipe geometry, detect the ball and advance its tracker."""
+    if cfg.VISION_ALGORITHM in ("ai", "v2"):
+        return detector.process(img, now_ms, frame_id)
     if pipe_detector is None:
         pipe_state = {
             "axis_start": tuple(cfg.AXIS_START),
@@ -365,6 +402,29 @@ def draw_overlay(img, detection, state, fps_value, measured_ratio):
     )
     img.draw_cross(target_x, target_y, image.COLOR_RED, 12, 2)
 
+    for box in detection.get("boxes", ()):
+        box_x, box_y, box_w, box_h, score = box[:5]
+        confirmed = score >= cfg.AI_VALID_CONFIDENCE
+        box_color = image.COLOR_RED if confirmed else image.COLOR_YELLOW
+        img.draw_rect(
+            int(round(box_x)),
+            int(round(box_y)),
+            int(round(box_w)),
+            int(round(box_h)),
+            box_color,
+            2,
+        )
+        img.draw_string(
+            int(round(box_x)),
+            max(0, int(round(box_y)) - 16),
+            "{} {:.0f}%".format(
+                "AI" if confirmed else "AI?",
+                100.0 * score,
+            ),
+            box_color,
+            0.8,
+        )
+
     for blob in detection["blobs"]:
         img.draw_rect(
             blob.x(), blob.y(), blob.w(), blob.h(), image.COLOR_BLUE, 1
@@ -378,11 +438,19 @@ def draw_overlay(img, detection, state, fps_value, measured_ratio):
         img.draw_circle(x, y, radius, color, 3)
         img.draw_cross(x, y, color, 8, 2)
         mode = "MEAS" if state["measured"] else "PRED"
-        status = "{} e={} v={:.0f} pipe={}".format(
+        status = "{} e={} v={:.0f} ref={}".format(
             mode,
             state["error_px"],
             state["velocity_px_s"],
-            "OK" if detection["pipe"]["valid"] else "STALE",
+            (
+                "FIXED"
+                if detection.get("algorithm") == "ai"
+                else (
+                    "OK"
+                    if detection["pipe"]["valid"]
+                    else "STALE"
+                )
+            ),
         )
         status_color = image.COLOR_GREEN
     else:

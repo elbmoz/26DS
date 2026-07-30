@@ -297,8 +297,9 @@ def analyze(log_path, video_path=None, return_metrics=False):
             "frames": sum(value > 0 for value in values),
         }
 
+    algorithm = str(rows[0].get("algorithm") or "").strip()
     pipe_metrics = None
-    if "pipe_valid" in rows[0]:
+    if "pipe_valid" in rows[0] and algorithm != "ai":
         pose_rows = [
             row
             for row in rows
@@ -368,6 +369,13 @@ def analyze(log_path, video_path=None, return_metrics=False):
             "experiment stages for comparisons"
         ),
     ]
+    if algorithm:
+        lines.insert(0, "algorithm: {}".format(algorithm))
+    if algorithm == "ai":
+        lines.append(
+            "coordinate reference: fixed installation calibration; "
+            "no image-based pipe pose was evaluated"
+        )
     if frame_map is not None:
         lines.insert(
             0,
@@ -521,6 +529,7 @@ def analyze(log_path, video_path=None, return_metrics=False):
         return report
 
     metrics = {
+        "algorithm": algorithm or None,
         "frames": len(rows),
         "duration_s": seconds,
         "rate_label": rate_label,

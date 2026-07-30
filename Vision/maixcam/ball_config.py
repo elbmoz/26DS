@@ -6,6 +6,9 @@
 #   "record" - synchronized bench-test video and per-frame CSV
 #   "serve"  - temporary read-only HTTP download of saved test runs
 APP_MODE = "stream"
+# The deployed path is the MaixHub YOLO model.  Legacy V1/V2 files remain only
+# for release rollback; they are not called while this is "ai".
+VISION_ALGORITHM = "ai"
 
 # Camera.  The rigid car installation no longer needs a 640 x 480 tracking
 # channel.  480 x 360 keeps the same 4:3 field of view and leaves the steel
@@ -72,6 +75,22 @@ ROI = _roi(18, 95, 560, 75)
 AXIS_START = _point(35, 132)
 AXIS_END = _point(576, 124)
 TARGET_POSITION = 0.50
+# V2 derives all blob geometry, search windows and motion gates from this
+# single physical scale instead of exposing separate width/height/area knobs.
+V2_BALL_DIAMETER_PX = _sx(26)
+# The neutral LAB island sits consistently about 14 detector pixels to the
+# right of the mirrored ball centre.  Calibrate that systematic observation
+# offset once in the target coordinate instead of adding a candidate-specific
+# correction branch to the detector.
+V2_TARGET_POSITION = 0.535
+
+# MaixHub model 312301 (DS-7.30), installed through MaixVision on the device.
+AI_MODEL_PATH = "/root/models/maixhub/312301/model_312301.mud"
+# Accept every MaixHub detection above 13% as a trusted steel-ball output.
+AI_CONFIDENCE = 0.13
+AI_VALID_CONFIDENCE = 0.13
+AI_IOU = 0.45
+AI_COAST_FRAMES = 2
 
 # The camera, pivot and pipe travel are mechanically fixed.  Detect only a
 # short central section of the green pipe and use its long edge for angle;
@@ -100,8 +119,11 @@ PIPE_TAPE_MAX_WIDTH_PX = _sx(90)
 PIPE_TAPE_MIN_HEIGHT_PX = _sy(8)
 PIPE_TAPE_MAX_HEIGHT_PX = _sy(48)
 PIPE_TAPE_MIN_PIXELS = _area(30)
-PIPE_TAPE_X_STRIDE = 5
-PIPE_TAPE_Y_STRIDE = 4
+# This pass only runs every fourth frame. Keep enough samples for the narrow
+# green end segment at steep poses; 5 x 4 fragmented it and allowed the upper
+# reflection to seed a stale y=62 pose while the real endpoint was near y=84.
+PIPE_TAPE_X_STRIDE = 4
+PIPE_TAPE_Y_STRIDE = 3
 PIPE_TAPE_EXPECTED_RIGHT_X = _sx(563)
 PIPE_TAPE_MAX_RIGHT_X_DISTANCE_PX = _sx(27)
 # The right endpoint has one mechanical degree of freedom in this view.

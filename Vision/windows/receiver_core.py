@@ -65,6 +65,8 @@ TRACKING_FIELDS = (
     "circle_count",
     "candidate_count",
     "candidates",
+    "algorithm",
+    "ai_boxes",
     "local_search",
     "fell_back",
     "axis_x0",
