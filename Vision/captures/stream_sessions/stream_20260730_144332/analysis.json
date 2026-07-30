@@ -1,0 +1,100 @@
+{
+  "schema": 1,
+  "tracking_csv": "H:\\speed\\26DS\\Vision\\captures\\stream_sessions\\stream_20260730_144332\\tracking.csv",
+  "video": null,
+  "metrics": {
+    "frames": 5791,
+    "duration_s": 204.183,
+    "rate_label": "logged telemetry rate",
+    "logged_rate_hz": 28.356915120259767,
+    "reported_detector_fps": {
+      "mean": 46.747332067000514,
+      "p05": 24.68,
+      "p95": 58.41
+    },
+    "measured_ratio": 0.970298739423243,
+    "valid_ratio": 1.0,
+    "coasting_ratio": 0.029701260576757038,
+    "evaluation": {
+      "whole_session_metric": "operational_availability",
+      "labeled_accuracy_available": false,
+      "accuracy_requires_marked_stage": true
+    },
+    "untracked_frames": 0,
+    "untracked_ratio": 0.0,
+    "longest_lost_frames": 0,
+    "longest_coast_frames": 3,
+    "detect_ms": {
+      "p50": 10.0,
+      "p95": 25.0,
+      "max": 61.0
+    },
+    "loop_dt_ms": {
+      "p50": 20.0,
+      "p95": 49.0,
+      "max": 81.0
+    },
+    "preview_frames": 6078,
+    "dropped_preview_frames": 0,
+    "video_pipeline_latency_ms": {
+      "p50": 69.649504,
+      "p95": 73.90266,
+      "max": 113.245672
+    },
+    "video_telemetry_alignment_error_ms": {
+      "p50": 10.511024,
+      "p95": 20.417008,
+      "max": 54.611416
+    },
+    "telemetry_receive_gap_ms": {
+      "p50": 35.3569,
+      "p95": 53.1217,
+      "max": 118.7944
+    },
+    "speed_groups": {
+      "slow(<80px/s)": {
+        "frames": 5777,
+        "measured_ratio": 0.9705729617448503,
+        "valid_ratio": 1.0
+      },
+      "medium(80-200px/s)": {
+        "frames": 14,
+        "measured_ratio": 0.8571428571428571,
+        "valid_ratio": 1.0
+      }
+    },
+    "marked_stages": [],
+    "candidate_rejections": {
+      "position_rejects": {
+        "candidates": 21,
+        "frames": 17
+      },
+      "lateral_rejects": {
+        "candidates": 0,
+        "frames": 0
+      },
+      "fixture_rejects": {
+        "candidates": 0,
+        "frames": 0
+      },
+      "quality_rejects": {
+        "candidates": 0,
+        "frames": 0
+      },
+      "jump_rejects": {
+        "candidates": 0,
+        "frames": 0
+      }
+    },
+    "pipe_pose": {
+      "valid_ratio": 1.0,
+      "measured_ratio": 0.19323087549646004,
+      "max_age_frames": 4,
+      "center_x_span_px": 0.0,
+      "center_y_span_px": 0.0,
+      "angle_min_deg": 0.6319604831070794,
+      "angle_max_deg": 1.3959327685416547
+    }
+  },
+  "report": "analysis window: 6078 decoded video frames, tracking 1077..10336\nframes: 5791\nduration: 204.18 s\nlogged telemetry rate: 28.36\nreported detector FPS mean/p05/p95: 46.75/24.68/58.41\nmeasured hit ratio: 97.03%\nvalid output ratio: 100.00%\nprediction coast ratio: 2.97%\nlongest lost streak: 0 frames\nlongest coast streak: 3 frames\ndetect time p50/p95/max: 10.0/25.0/61.0 ms\nloop dt p50/p95/max: 20.0/49.0/81.0 ms\nevaluation note: whole-session measured/valid ratios are operational availability, not labeled accuracy; use marked experiment stages for comparisons\nvideo pipeline latency p50/p95/max: 69.6/73.9/113.2 ms\nvideo/telemetry alignment error p50/p95/max: 10.5/20.4/54.6 ms\npreview frames intentionally dropped: 0\ntelemetry receive gap p50/p95/max: 35.4/53.1/118.8 ms\ncandidate rejects position/lateral/fixture/quality/jump: 21/0/0/0/0 candidates\npipe pose valid/measured: 100.00%/19.32%, max age 4 frames\npipe motion center span x/y: 0.0/0.0 px, angle range: 0.63..1.40 deg\nslow(<80px/s): 5777 frames, measured 97.06%, valid 100.00%\nmedium(80-200px/s): 14 frames, measured 85.71%, valid 100.00%"
+}

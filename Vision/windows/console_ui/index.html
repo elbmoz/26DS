@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pipe / Vision Control</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <div>
+        <strong>PIPE / VISION</strong>
+        <span>车载平衡滚球 · 实验控制台</span>
+      </div>
+    </div>
+
+    <div class="device-summary">
+      <span id="device-dot" class="status-dot"></span>
+      <div>
+        <span id="device-state">正在读取设备状态</span>
+        <small id="device-release">10.16.6.1 · —</small>
+      </div>
+    </div>
+
+    <nav class="primary-actions" aria-label="设备操作">
+      <button id="preview-button" class="button subtle">连接预览</button>
+      <button id="record-button" class="button accent">开始录制</button>
+      <button id="stop-record-button" class="button subtle" hidden>结束录制</button>
+      <button id="deploy-button" class="button strong">部署并重启</button>
+    </nav>
+  </header>
+
+  <main class="workspace">
+    <section class="vision-stage" aria-labelledby="vision-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">LIVE SENSOR</p>
+          <h1 id="vision-title">钢球与管道</h1>
+        </div>
+        <div class="stream-flags">
+          <span id="stream-state">等待视频</span>
+          <span id="record-state">未录制</span>
+        </div>
+      </div>
+
+      <div class="frame-shell">
+        <img id="live-frame" alt="MaixCAM 实时识别画面">
+        <div id="frame-empty" class="frame-empty">
+          <span class="scan-line"></span>
+          <strong>等待 MaixCAM 图像</strong>
+          <p>点击“连接预览”，或先部署并启动板端程序。</p>
+        </div>
+      </div>
+
+      <div class="telemetry-strip" aria-label="关键识别指标">
+        <div>
+          <span>识别帧率</span>
+          <strong id="metric-fps">—</strong>
+          <small>FPS</small>
+        </div>
+        <div>
+          <span>单帧检测</span>
+          <strong id="metric-detect">—</strong>
+          <small>ms</small>
+        </div>
+        <div>
+          <span>钢球位置</span>
+          <strong id="metric-position">—</strong>
+          <small>管长</small>
+        </div>
+        <div>
+          <span>运动速度</span>
+          <strong id="metric-velocity">—</strong>
+          <small>px/s</small>
+        </div>
+        <div>
+          <span>图传延迟</span>
+          <strong id="metric-delay">—</strong>
+          <small>ms</small>
+        </div>
+      </div>
+
+      <section class="signal-console" aria-labelledby="signal-title">
+        <div class="signal-heading">
+          <div>
+            <p class="eyebrow">WINDOWS TELEMETRY</p>
+            <h2 id="signal-title">位置模拟与实时波形</h2>
+          </div>
+          <div class="signal-toolbar" aria-label="波形时间范围">
+            <span id="telemetry-rate">实时推送 · 等待连接</span>
+            <button type="button" data-window-seconds="15">15 秒</button>
+            <button type="button" class="active" data-window-seconds="30">30 秒</button>
+            <button type="button" data-window-seconds="60">60 秒</button>
+          </div>
+        </div>
+
+        <div class="pipe-simulator">
+          <div class="pipe-simulator-copy">
+            <span>视觉输出位置</span>
+            <strong id="sim-position">等待数据</strong>
+          </div>
+          <div id="sim-track" class="sim-track" data-state="invalid">
+            <span class="sim-stop left" aria-hidden="true"></span>
+            <span class="sim-target" aria-hidden="true"></span>
+            <span id="sim-ball" class="sim-ball" aria-label="识别到的钢球位置"></span>
+            <span class="sim-stop right" aria-hidden="true"></span>
+          </div>
+          <div class="sim-scale" aria-hidden="true">
+            <span>左端 · 0%</span>
+            <span>目标 · 50%</span>
+            <span>右端 · 100%</span>
+          </div>
+        </div>
+
+        <div class="wave-grid">
+          <figure class="wave-panel">
+            <figcaption>
+              <span><i class="legend-dot position"></i>位置</span>
+              <strong id="wave-position-value">—</strong>
+            </figcaption>
+            <canvas id="position-chart" aria-label="钢球位置历史波形"></canvas>
+          </figure>
+          <figure class="wave-panel">
+            <figcaption>
+              <span><i class="legend-dot velocity"></i>速度</span>
+              <strong id="wave-velocity-value">—</strong>
+            </figcaption>
+            <canvas id="velocity-chart" aria-label="钢球速度历史波形"></canvas>
+          </figure>
+          <figure class="wave-panel">
+            <figcaption>
+              <span><i class="legend-dot fps"></i>识别帧率</span>
+              <strong id="wave-fps-value">—</strong>
+            </figcaption>
+            <canvas id="fps-chart" aria-label="识别帧率历史波形"></canvas>
+          </figure>
+          <figure class="wave-panel">
+            <figcaption>
+              <span class="timing-legends">
+                <span><i class="legend-dot detect"></i>识别</span>
+                <span><i class="legend-dot latency"></i>图传</span>
+              </span>
+              <strong id="wave-timing-value">—</strong>
+            </figcaption>
+            <canvas id="timing-chart" aria-label="识别耗时与图传延迟历史波形"></canvas>
+          </figure>
+        </div>
+
+        <div class="signal-footnote">
+          <span><i id="signal-valid-dot" class="status-dot"></i><b id="signal-valid-label">无有效球</b></span>
+          <span>图表：Windows 接收遥测后绘制</span>
+          <span>控制：STM32 · PD42S1</span>
+        </div>
+      </section>
+    </section>
+
+    <aside class="inspector">
+      <nav class="tabs" aria-label="检查器页面">
+        <button class="tab active" data-tab="tracking">实时状态</button>
+        <button class="tab" data-tab="parameters">识别参数</button>
+        <button class="tab" data-tab="system">设备与版本</button>
+      </nav>
+
+      <section class="tab-panel active" data-panel="tracking">
+        <div class="inspector-title">
+          <div>
+            <p class="eyebrow">TRACKING</p>
+            <h2>当前识别</h2>
+          </div>
+          <span id="tracking-verdict" class="verdict neutral">无测量</span>
+        </div>
+
+        <dl class="status-list">
+          <div><dt>真实检测点</dt><dd id="status-measured">—</dd></div>
+          <div><dt>控制输出有效</dt><dd id="status-valid">—</dd></div>
+          <div><dt>管道姿态</dt><dd id="status-pipe">—</dd></div>
+          <div><dt>横向偏差</dt><dd id="status-lateral">—</dd></div>
+          <div><dt>目标误差</dt><dd id="status-error">—</dd></div>
+          <div><dt>视频 / 遥测同步</dt><dd id="status-sync">—</dd></div>
+        </dl>
+
+        <div class="experiment-block">
+          <div class="subheading">
+            <h3>实验阶段</h3>
+            <span>写入录像时间线</span>
+          </div>
+          <div class="marker-grid">
+            <button data-marker="静止">静止</button>
+            <button data-marker="慢速滚动">慢滚</button>
+            <button data-marker="快速滚动">快滚</button>
+            <button data-marker="换向">换向</button>
+            <button data-marker="短时遮挡">遮挡</button>
+            <button id="snapshot-button">保存截图</button>
+          </div>
+        </div>
+
+        <div class="session-detail">
+          <span>当前会话</span>
+          <code id="session-directory">尚未建立</code>
+        </div>
+
+        <div class="analysis-block">
+          <div class="subheading">
+            <h3>上次录制复盘</h3>
+            <span>运行可用性，不是标注准确率</span>
+          </div>
+          <div class="analysis-grid">
+            <div><span>测量可用率</span><strong id="analysis-measured">—</strong></div>
+            <div><span>有效输出率</span><strong id="analysis-valid">—</strong></div>
+            <div><span>检测均值</span><strong id="analysis-fps">—</strong></div>
+            <div><span>延迟中位数</span><strong id="analysis-delay">—</strong></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="tab-panel" data-panel="parameters">
+        <div class="inspector-title">
+          <div>
+            <p class="eyebrow">TUNING</p>
+            <h2>识别参数</h2>
+          </div>
+          <span id="config-state" class="verdict neutral">设备值</span>
+        </div>
+
+        <form id="parameter-form">
+          <label>
+            <span>目标停球位置 <small>0—1 管长</small></span>
+            <input name="target_position" type="number" min="0.05" max="0.95" step="0.01">
+          </label>
+          <label>
+            <span>圆检测严格度 <small>越高误圆越少</small></span>
+            <input name="circle_threshold" type="number" min="100" max="5000" step="50">
+          </label>
+          <div class="paired-inputs">
+            <label>
+              <span>钢球最小半径</span>
+              <input name="circle_min_radius" type="number" min="4" max="24" step="1">
+            </label>
+            <label>
+              <span>钢球最大半径</span>
+              <input name="circle_max_radius" type="number" min="6" max="32" step="1">
+            </label>
+          </div>
+          <label>
+            <span>中心线上方范围 <small>检测像素</small></span>
+            <input name="max_axis_distance_px" type="number" min="3" max="80" step="1">
+          </label>
+          <label>
+            <span>重新找球可信度 <small>越高越谨慎</small></span>
+            <input name="acquire_min_quality" type="number" min="0" max="250" step="1">
+          </label>
+          <label>
+            <span>最大单帧跳动 <small>检测像素</small></span>
+            <input name="max_frame_jump_px" type="number" min="5" max="240" step="1">
+          </label>
+          <label>
+            <span>丢球后继续预测 <small>帧</small></span>
+            <input name="coast_frames" type="number" min="0" max="15" step="1">
+          </label>
+          <button class="button accent full" type="submit">应用到 MaixCAM</button>
+        </form>
+
+        <p class="safety-note">
+          参数接口只影响视觉检测与跟踪，不包含电机使能、运动或 PID 指令。
+        </p>
+      </section>
+
+      <section class="tab-panel" data-panel="system">
+        <div class="inspector-title">
+          <div>
+            <p class="eyebrow">DEVICE</p>
+            <h2>部署状态</h2>
+          </div>
+          <span id="operation-state" class="verdict neutral">空闲</span>
+        </div>
+
+        <dl class="status-list">
+          <div><dt>MaixCAM 地址</dt><dd id="system-ip">—</dd></div>
+          <div><dt>受管进程</dt><dd id="system-process">—</dd></div>
+          <div><dt>当前版本</dt><dd id="system-release">—</dd></div>
+          <div><dt>源码哈希</dt><dd id="system-hash">—</dd></div>
+          <div><dt>本地协作 API</dt><dd>127.0.0.1:8770</dd></div>
+        </dl>
+
+        <div class="system-actions">
+          <button id="device-start-button" class="button subtle">启动板端</button>
+          <button id="device-stop-button" class="button danger">停止板端</button>
+        </div>
+
+        <div class="api-note">
+          <h3>人机共用状态</h3>
+          <p>界面和 Codex 读取同一个实时状态、同一条视频流和同一份实验记录。</p>
+          <code>GET /api/state · POST /api/action</code>
+        </div>
+      </section>
+    </aside>
+  </main>
+
+  <footer class="activity-rail">
+    <div class="activity-heading">
+      <span id="activity-indicator" class="status-dot"></span>
+      <strong id="activity-title">控制台就绪</strong>
+      <span id="activity-message">等待操作</span>
+    </div>
+    <pre id="activity-log" aria-label="最近日志"></pre>
+  </footer>
+
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+*
+!.gitignore
+!README.md
+!stream_sessions/
+stream_sessions/*
+!stream_sessions/stream_20260730_144332/
+stream_sessions/stream_20260730_144332/*
+!stream_sessions/stream_20260730_144332/analysis.json
+!stream_sessions/stream_20260730_144332/analysis.txt
+!stream_sessions/stream_20260730_144332/tracking.csv

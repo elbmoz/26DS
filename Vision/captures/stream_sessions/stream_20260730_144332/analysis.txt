@@ -1,0 +1,22 @@
+analysis window: 6078 decoded video frames, tracking 1077..10336
+frames: 5791
+duration: 204.18 s
+logged telemetry rate: 28.36
+reported detector FPS mean/p05/p95: 46.75/24.68/58.41
+measured hit ratio: 97.03%
+valid output ratio: 100.00%
+prediction coast ratio: 2.97%
+longest lost streak: 0 frames
+longest coast streak: 3 frames
+detect time p50/p95/max: 10.0/25.0/61.0 ms
+loop dt p50/p95/max: 20.0/49.0/81.0 ms
+evaluation note: whole-session measured/valid ratios are operational availability, not labeled accuracy; use marked experiment stages for comparisons
+video pipeline latency p50/p95/max: 69.6/73.9/113.2 ms
+video/telemetry alignment error p50/p95/max: 10.5/20.4/54.6 ms
+preview frames intentionally dropped: 0
+telemetry receive gap p50/p95/max: 35.4/53.1/118.8 ms
+candidate rejects position/lateral/fixture/quality/jump: 21/0/0/0/0 candidates
+pipe pose valid/measured: 100.00%/19.32%, max age 4 frames
+pipe motion center span x/y: 0.0/0.0 px, angle range: 0.63..1.40 deg
+slow(<80px/s): 5777 frames, measured 97.06%, valid 100.00%
+medium(80-200px/s): 14 frames, measured 85.71%, valid 100.00%

@@ -1,0 +1,210 @@
+import sys
+import unittest
+from pathlib import Path
+
+
+MAIXCAM_DIR = Path(__file__).resolve().parents[1] / "maixcam"
+sys.path.insert(0, str(MAIXCAM_DIR))
+
+from stream_protocol import (
+    ProtocolError,
+    apply_parameters,
+    config_snapshot,
+    decode_packet,
+    encode_packet,
+    make_set_config_request,
+    make_subscribe_request,
+    make_tracking_packet,
+    parse_subscribe_request,
+    parse_set_config_request,
+    validate_parameters,
+)
+
+
+class FakeDetector:
+    local_width = 140
+    circle_threshold = 1800
+    circle_min_radius = 11
+    circle_max_radius = 18
+
+
+class FakeTracker:
+    target_position = 0.5
+    position_alpha = 0.72
+    velocity_beta = 0.14
+    lateral_alpha = 0.55
+    max_axis_distance_px = 22.0
+    max_below_axis_distance_px = 12.0
+    max_frame_jump_px = 95.0
+    acquire_position_margin = 0.08
+    track_position_margin = 0.02
+    acquire_endpoint_inset = 0.02
+    track_endpoint_inset = 0.015
+    acquire_min_quality = 60.0
+    track_min_quality = 80.0
+    coast_frames = 3
+    memory_frames = 8
+
+
+class FakeConfig:
+    TARGET_POSITION = 0.5
+    POSITION_ALPHA = 0.72
+    VELOCITY_BETA = 0.14
+    LATERAL_ALPHA = 0.55
+    MAX_AXIS_DISTANCE_PX = 22.0
+    MAX_BELOW_AXIS_DISTANCE_PX = 12.0
+    MAX_FRAME_JUMP_PX = 95.0
+    ACQUIRE_POSITION_MARGIN = 0.08
+    TRACK_POSITION_MARGIN = 0.02
+    ACQUIRE_MIN_QUALITY = 60.0
+    TRACK_MIN_QUALITY = 80.0
+    COAST_FRAMES = 3
+    LOCAL_SEARCH_WIDTH_PX = 140
+    CIRCLE_THRESHOLD = 1800
+    CIRCLE_MIN_RADIUS = 11
+    CIRCLE_MAX_RADIUS = 18
+
+
+class StreamProtocolTests(unittest.TestCase):
+    def test_tracking_packet_is_compact_and_round_trips(self):
+        state = {
+            "valid": True,
+            "measured": True,
+            "coasting": False,
+            "x": 320.1256,
+            "y": 165.25,
+            "radius": 9.5,
+            "position": 0.51512,
+            "position_px": 211.2,
+            "error_px": 4,
+            "lateral_px": -1,
+            "velocity_px_s": 182.3,
+            "quality": 91.2,
+            "measurement_x": 321.0,
+            "measurement_y": 165.0,
+            "hits": 4,
+            "misses": 0,
+        }
+        detection = {
+            "raw_count": 2,
+            "candidates": [(321, 165, 9, 91)],
+            "search_roi": (250, 125, 140, 85),
+            "full_roi": (80, 125, 470, 85),
+            "fell_back": False,
+            "axis_start": (102.5, 150.25),
+            "axis_end": (521.5, 178.0),
+            "pipe": {
+                "measured": True,
+                "valid": True,
+                "age_frames": 0,
+                "raw_blob_count": 1,
+                "length": 427.0,
+                "width": 28.0,
+                "score": 12345.0,
+            },
+        }
+        packet = make_tracking_packet(
+            "session",
+            12,
+            500,
+            25,
+            20,
+            51.2,
+            7,
+            state,
+            detection,
+        )
+        encoded = encode_packet(packet)
+        self.assertLess(len(encoded), 1200)
+        decoded = decode_packet(encoded)
+        self.assertEqual(decoded["type"], "tracking")
+        self.assertEqual(decoded["frame_id"], 25)
+        self.assertTrue(decoded["local_search"])
+        self.assertEqual(decoded["axis_x0"], 102.5)
+        self.assertTrue(decoded["pipe_valid"])
+        self.assertEqual(decoded["roi_w"], 470)
+
+    def test_parameter_validation_rejects_unknown_and_out_of_range(self):
+        clean, errors = validate_parameters(
+            {
+                "target_position": 1.2,
+                "coast_frames": 2.5,
+                "unknown": 10,
+                "velocity_beta": 0.2,
+            }
+        )
+        self.assertEqual(clean, {"velocity_beta": 0.2})
+        self.assertIn("target_position", errors)
+        self.assertIn("coast_frames", errors)
+        self.assertIn("unknown", errors)
+
+    def test_apply_parameters_updates_runtime_objects(self):
+        detector = FakeDetector()
+        tracker = FakeTracker()
+        config = FakeConfig()
+        clean, errors = validate_parameters(
+            {
+                "target_position": 0.55,
+                "position_alpha": 0.8,
+                "max_below_axis_distance_px": 14,
+                "acquire_position_margin": 0.07,
+                "track_position_margin": 0.03,
+                "acquire_endpoint_inset": 0.025,
+                "track_endpoint_inset": 0.01,
+                "acquire_min_quality": 70,
+                "track_min_quality": 75,
+                "coast_frames": 5,
+                "local_search_width_px": 180,
+                "circle_threshold": 700,
+            }
+        )
+        self.assertFalse(errors)
+        result = apply_parameters(clean, detector, tracker, config)
+        self.assertEqual(result["target_position"], 0.55)
+        self.assertEqual(tracker.position_alpha, 0.8)
+        self.assertEqual(tracker.max_below_axis_distance_px, 14)
+        self.assertEqual(tracker.acquire_position_margin, 0.07)
+        self.assertEqual(tracker.track_position_margin, 0.03)
+        self.assertEqual(tracker.acquire_endpoint_inset, 0.025)
+        self.assertEqual(tracker.track_endpoint_inset, 0.01)
+        self.assertEqual(tracker.acquire_min_quality, 70)
+        self.assertEqual(tracker.track_min_quality, 75)
+        self.assertEqual(tracker.coast_frames, 5)
+        self.assertEqual(detector.local_width, 180)
+        self.assertEqual(detector.circle_threshold, 700)
+        self.assertEqual(config.TARGET_POSITION, 0.55)
+
+    def test_control_request_requires_matching_token(self):
+        request = make_set_config_request(
+            "req-1", "correct", {"target_position": 0.6}
+        )
+        request_id, clean, errors = parse_set_config_request(
+            encode_packet(request), "correct"
+        )
+        self.assertEqual(request_id, "req-1")
+        self.assertEqual(clean["target_position"], 0.6)
+        self.assertFalse(errors)
+        with self.assertRaises(ProtocolError):
+            parse_set_config_request(encode_packet(request), "wrong")
+
+    def test_subscribe_request_validates_port_and_token(self):
+        request = make_subscribe_request("sub-1", "correct", 42101)
+        request_id, port = parse_subscribe_request(
+            encode_packet(request), "correct"
+        )
+        self.assertEqual(request_id, "sub-1")
+        self.assertEqual(port, 42101)
+        request["telemetry_port"] = 80
+        with self.assertRaises(ProtocolError):
+            parse_subscribe_request(encode_packet(request), "correct")
+
+    def test_config_snapshot_contains_only_runtime_safe_fields(self):
+        snapshot = config_snapshot(FakeDetector(), FakeTracker())
+        self.assertIn("target_position", snapshot)
+        self.assertIn("local_search_width_px", snapshot)
+        self.assertNotIn("roi", snapshot)
+        self.assertNotIn("motor", snapshot)
+
+
+if __name__ == "__main__":
+    unittest.main()
