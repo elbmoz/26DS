@@ -39,19 +39,32 @@ let telemetryRateStartedMs = 0;
 let lastTelemetryKey = "";
 let lastTelemetrySession = "";
 let historyWindowMs = 30000;
+let chartPanOffsetMs = 0;
+let chartHoverTimeMs = null;
+let chartDragging = false;
+let chartDragStartX = 0;
+let chartDragStartPanMs = 0;
 let chartsDirty = true;
-let lastChartDrawMs = 0;
+let lastHistoryPruneMs = 0;
 const telemetryHistory = [];
-const MAX_HISTORY_MS = 65000;
+const MAX_HISTORY_MS = 10 * 60 * 1000;
+const MIN_CHART_WINDOW_MS = 1000;
+const MAX_CHART_WINDOW_MS = 5 * 60 * 1000;
 const chartColors = {
   position: "#43d6b1",
+  positionPoint: "#a0f5df",
   velocity: "#72a7ff",
+  velocityPoint: "#b9d2ff",
   fps: "#e9c46a",
+  fpsPoint: "#ffe4a1",
   detect: "#ff9f67",
+  detectPoint: "#ffd0b5",
   latency: "#b18cff",
+  latencyPoint: "#ddc9ff",
   grid: "rgba(132, 144, 157, 0.13)",
   axis: "rgba(174, 185, 192, 0.48)",
   reference: "rgba(237, 243, 244, 0.26)",
+  crosshair: "rgba(219, 231, 235, 0.52)",
   coast: "#ffb65c",
 };
 const operationLabels = {
@@ -112,8 +125,15 @@ function appendTelemetrySample(
   const session = String(tracking.session || "");
   const key = `${session}:${tracking.seq}`;
   if (key === lastTelemetryKey) return;
+  const previousLatestTime = telemetryHistory.length
+    ? telemetryHistory[telemetryHistory.length - 1].t
+    : null;
   if (lastTelemetrySession && session !== lastTelemetrySession) {
     telemetryHistory.length = 0;
+    chartPanOffsetMs = 0;
+    chartHoverTimeMs = null;
+    lastHistoryPruneMs = 0;
+    updateChartLiveState();
   }
   lastTelemetrySession = session;
   lastTelemetryKey = key;
@@ -134,12 +154,30 @@ function appendTelemetrySample(
     coasting: Boolean(tracking.coasting),
     target: finiteOrNull(config.target_position),
   });
-
-  const oldest = now - MAX_HISTORY_MS;
-  while (telemetryHistory.length && telemetryHistory[0].t < oldest) {
-    telemetryHistory.shift();
+  if (
+    chartPanOffsetMs > 0 &&
+    previousLatestTime != null &&
+    now > previousLatestTime
+  ) {
+    chartPanOffsetMs += now - previousLatestTime;
   }
-  chartsDirty = true;
+
+  if (now - lastHistoryPruneMs >= 5000) {
+    const oldest = now - MAX_HISTORY_MS;
+    let removeCount = 0;
+    while (
+      removeCount < telemetryHistory.length &&
+      telemetryHistory[removeCount].t < oldest
+    ) {
+      removeCount += 1;
+    }
+    if (removeCount > 0) {
+      telemetryHistory.splice(0, removeCount);
+      if (chartPanOffsetMs > 0) chartsDirty = true;
+    }
+    lastHistoryPruneMs = now;
+  }
+  if (chartPanOffsetMs === 0) chartsDirty = true;
 }
 
 function renderSimulator(tracking, config) {
@@ -312,22 +350,157 @@ function drawReference(context, left, top, width, height, value, minimum, maximu
   context.restore();
 }
 
-function drawSeries(context, samples, key, color, mapX, mapY) {
+function chartLatestTime() {
+  return telemetryHistory.length
+    ? telemetryHistory[telemetryHistory.length - 1].t
+    : Date.now();
+}
+
+function clampChartPan(value, windowMs = historyWindowMs) {
+  if (!telemetryHistory.length) return 0;
+  const availableMs = Math.max(
+    0,
+    chartLatestTime() - telemetryHistory[0].t - windowMs,
+  );
+  return clamp(Number(value) || 0, 0, availableMs);
+}
+
+function chartViewRange() {
+  chartPanOffsetMs = clampChartPan(chartPanOffsetMs);
+  const endTime = chartLatestTime() - chartPanOffsetMs;
+  return {
+    startTime: endTime - historyWindowMs,
+    endTime,
+  };
+}
+
+function lowerBoundSample(time) {
+  let low = 0;
+  let high = telemetryHistory.length;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    if (telemetryHistory[middle].t < time) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
+
+function historyForCurrentWindow(range) {
+  if (!telemetryHistory.length) return [];
+  let startIndex = lowerBoundSample(range.startTime);
+  let endIndex = lowerBoundSample(range.endTime);
+  if (startIndex > 0) startIndex -= 1;
+  if (
+    endIndex < telemetryHistory.length &&
+    telemetryHistory[endIndex].t <= range.endTime
+  ) {
+    endIndex += 1;
+  }
+  return telemetryHistory.slice(startIndex, endIndex);
+}
+
+function nearestSample(samples, time) {
+  if (!samples.length || time == null) return null;
+  let low = 0;
+  let high = samples.length - 1;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    if (samples[middle].t < time) low = middle + 1;
+    else high = middle;
+  }
+  if (low === 0) return samples[0];
+  const before = samples[low - 1];
+  const after = samples[low];
+  if (!after) return before;
+  return time - before.t <= after.t - time ? before : after;
+}
+
+function formatTimeLabel(time, includeMilliseconds = false) {
+  const date = new Date(time);
+  const base = [
+    String(date.getHours()).padStart(2, "0"),
+    String(date.getMinutes()).padStart(2, "0"),
+    String(date.getSeconds()).padStart(2, "0"),
+  ].join(":");
+  return includeMilliseconds
+    ? `${base}.${String(date.getMilliseconds()).padStart(3, "0")}`
+    : base;
+}
+
+function buildSeriesPoints(samples, key, maxBuckets) {
+  const groupSize = Math.max(
+    1,
+    Math.ceil(samples.length / Math.max(1, maxBuckets)),
+  );
+  if (groupSize === 1) {
+    return {
+      raw: true,
+      points: samples.map((sample) => ({
+        sample,
+        value: sample[key],
+      })),
+    };
+  }
+
+  const points = [];
+  for (let start = 0; start < samples.length; start += groupSize) {
+    const end = Math.min(samples.length, start + groupSize);
+    let minimum = null;
+    let maximum = null;
+    for (let index = start; index < end; index += 1) {
+      const sample = samples[index];
+      const value = sample[key];
+      if (value == null || !Number.isFinite(value)) continue;
+      if (minimum == null || value < minimum.value) {
+        minimum = { sample, value };
+      }
+      if (maximum == null || value > maximum.value) {
+        maximum = { sample, value };
+      }
+    }
+    if (minimum == null) {
+      points.push({
+        sample: samples[start + Math.floor((end - start) / 2)],
+        value: null,
+      });
+    } else if (minimum.sample.t <= maximum.sample.t) {
+      points.push(minimum);
+      if (maximum !== minimum) points.push(maximum);
+    } else {
+      points.push(maximum);
+      points.push(minimum);
+    }
+  }
+  return { raw: false, points };
+}
+
+function drawSeries(
+  context,
+  samples,
+  series,
+  mapX,
+  mapY,
+  plotWidth,
+) {
+  const display = buildSeriesPoints(
+    samples,
+    series.key,
+    Math.ceil(plotWidth * 1.5),
+  );
   context.save();
-  context.strokeStyle = color;
-  context.lineWidth = 1.6;
+  context.strokeStyle = series.color;
+  context.lineWidth = 1.45;
   context.lineJoin = "round";
   context.lineCap = "round";
   context.beginPath();
   let drawing = false;
-  for (const sample of samples) {
-    const value = sample[key];
-    if (value == null || !Number.isFinite(value)) {
+  for (const point of display.points) {
+    if (point.value == null || !Number.isFinite(point.value)) {
       drawing = false;
       continue;
     }
-    const x = mapX(sample.t);
-    const y = mapY(value);
+    const x = mapX(point.sample.t);
+    const y = mapY(point.value);
     if (drawing) context.lineTo(x, y);
     else {
       context.moveTo(x, y);
@@ -335,33 +508,157 @@ function drawSeries(context, samples, key, color, mapX, mapY) {
     }
   }
   context.stroke();
+
+  if (display.raw) {
+    const radius =
+      samples.length < plotWidth * 0.7
+        ? 2.05
+        : samples.length < plotWidth * 1.2
+          ? 1.45
+          : 0.9;
+    for (const point of display.points) {
+      if (point.value == null || !Number.isFinite(point.value)) continue;
+      const coast =
+        series.key === "position" && point.sample.coasting;
+      context.fillStyle = coast
+        ? chartColors.coast
+        : series.pointColor;
+      context.beginPath();
+      context.arc(
+        mapX(point.sample.t),
+        mapY(point.value),
+        radius,
+        0,
+        Math.PI * 2,
+      );
+      context.fill();
+    }
+  }
   context.restore();
 }
 
-function drawWaveChart(canvas, samples, options) {
-  const { context, width, height } = prepareCanvas(canvas);
-  const padding = { left: 34, right: 9, top: 7, bottom: 18 };
-  const plotWidth = Math.max(1, width - padding.left - padding.right);
-  const plotHeight = Math.max(1, height - padding.top - padding.bottom);
-  const minimum = options.minimum;
-  const maximum = Math.max(minimum + 0.001, options.maximum);
-  const endTime = samples.length ? samples[samples.length - 1].t : Date.now();
-  const startTime = endTime - historyWindowMs;
-  const mapX = (time) => padding.left + ((time - startTime) / historyWindowMs) * plotWidth;
-  const mapY = (value) => padding.top + (1 - (value - minimum) / (maximum - minimum)) * plotHeight;
+function drawChartOverlay(
+  context,
+  samples,
+  options,
+  padding,
+  plotWidth,
+  plotHeight,
+  mapX,
+  mapY,
+) {
+  const hovered = nearestSample(samples, chartHoverTimeMs);
+  if (!hovered) return;
+  const x = mapX(hovered.t);
+  if (
+    x < padding.left ||
+    x > padding.left + plotWidth
+  ) {
+    return;
+  }
 
   context.save();
-  context.strokeStyle = chartColors.grid;
+  context.setLineDash([3, 3]);
+  context.strokeStyle = chartColors.crosshair;
   context.lineWidth = 1;
-  for (let row = 0; row <= 3; row += 1) {
-    const y = padding.top + (plotHeight * row) / 3;
+  context.beginPath();
+  context.moveTo(x, padding.top);
+  context.lineTo(x, padding.top + plotHeight);
+  context.stroke();
+
+  const primaryValue = hovered[options.series[0].key];
+  if (primaryValue != null && Number.isFinite(primaryValue)) {
+    const y = mapY(primaryValue);
     context.beginPath();
     context.moveTo(padding.left, y);
     context.lineTo(padding.left + plotWidth, y);
     context.stroke();
   }
-  for (let column = 0; column <= 3; column += 1) {
-    const x = padding.left + (plotWidth * column) / 3;
+  context.setLineDash([]);
+
+  const rows = [];
+  for (const series of options.series) {
+    const value = hovered[series.key];
+    if (value == null || !Number.isFinite(value)) continue;
+    rows.push({
+      color: series.pointColor,
+      text: `${series.label} ${series.formatValue(value)}`,
+      value,
+    });
+    context.fillStyle =
+      series.key === "position" && hovered.coasting
+        ? chartColors.coast
+        : series.pointColor;
+    context.strokeStyle = "#07100e";
+    context.lineWidth = 1;
+    context.beginPath();
+    context.arc(x, mapY(value), 3.2, 0, Math.PI * 2);
+    context.fill();
+    context.stroke();
+  }
+
+  const timeText = formatTimeLabel(hovered.t, true);
+  context.font = '9px "Cascadia Mono", Consolas, monospace';
+  let boxWidth = context.measureText(timeText).width + 18;
+  for (const row of rows) {
+    boxWidth = Math.max(
+      boxWidth,
+      context.measureText(row.text).width + 29,
+    );
+  }
+  const boxHeight = 23 + rows.length * 14;
+  const boxX =
+    x < padding.left + plotWidth / 2
+      ? padding.left + plotWidth - boxWidth - 6
+      : padding.left + 6;
+  const boxY = padding.top + 6;
+
+  context.fillStyle = "rgba(11, 16, 21, 0.94)";
+  context.strokeStyle = "rgba(104, 121, 134, 0.55)";
+  context.lineWidth = 1;
+  context.fillRect(boxX, boxY, boxWidth, boxHeight);
+  context.strokeRect(boxX + 0.5, boxY + 0.5, boxWidth - 1, boxHeight - 1);
+  context.fillStyle = "#dfe8eb";
+  context.textAlign = "left";
+  context.fillText(timeText, boxX + 8, boxY + 14);
+  rows.forEach((row, index) => {
+    const rowY = boxY + 27 + index * 14;
+    context.fillStyle = row.color;
+    context.beginPath();
+    context.arc(boxX + 10, rowY - 3, 2.5, 0, Math.PI * 2);
+    context.fill();
+    context.fillStyle = "#b9c4c9";
+    context.fillText(row.text, boxX + 18, rowY);
+  });
+  context.restore();
+}
+
+function drawWaveChart(canvas, samples, range, options) {
+  const { context, width, height } = prepareCanvas(canvas);
+  const padding = { left: 35, right: 9, top: 7, bottom: 19 };
+  const plotWidth = Math.max(1, width - padding.left - padding.right);
+  const plotHeight = Math.max(1, height - padding.top - padding.bottom);
+  const minimum = options.minimum;
+  const maximum = Math.max(minimum + 0.001, options.maximum);
+  const mapX = (time) =>
+    padding.left +
+    ((time - range.startTime) / historyWindowMs) * plotWidth;
+  const mapY = (value) =>
+    padding.top +
+    (1 - (value - minimum) / (maximum - minimum)) * plotHeight;
+
+  context.save();
+  context.strokeStyle = chartColors.grid;
+  context.lineWidth = 1;
+  for (let row = 0; row <= 4; row += 1) {
+    const y = padding.top + (plotHeight * row) / 4;
+    context.beginPath();
+    context.moveTo(padding.left, y);
+    context.lineTo(padding.left + plotWidth, y);
+    context.stroke();
+  }
+  for (let column = 0; column <= 4; column += 1) {
+    const x = padding.left + (plotWidth * column) / 4;
     context.beginPath();
     context.moveTo(x, padding.top);
     context.lineTo(x, padding.top + plotHeight);
@@ -370,12 +667,38 @@ function drawWaveChart(canvas, samples, options) {
   context.fillStyle = chartColors.axis;
   context.font = '9px "Cascadia Mono", Consolas, monospace';
   context.textAlign = "right";
-  context.fillText(options.formatAxis(maximum), padding.left - 5, padding.top + 7);
-  context.fillText(options.formatAxis(minimum), padding.left - 5, padding.top + plotHeight);
+  context.fillText(
+    options.formatAxis(maximum),
+    padding.left - 5,
+    padding.top + 7,
+  );
+  context.fillText(
+    options.formatAxis(minimum),
+    padding.left - 5,
+    padding.top + plotHeight,
+  );
   context.textAlign = "left";
-  context.fillText(`-${Math.round(historyWindowMs / 1000)}s`, padding.left, height - 4);
+  context.fillText(
+    formatTimeLabel(range.startTime),
+    padding.left,
+    height - 4,
+  );
+  context.textAlign = "center";
+  context.fillText(
+    `${(historyWindowMs / 1000).toFixed(historyWindowMs < 10000 ? 1 : 0)}s`,
+    padding.left + plotWidth / 2,
+    height - 4,
+  );
   context.textAlign = "right";
-  context.fillText("现在", padding.left + plotWidth, height - 4);
+  context.fillStyle =
+    chartPanOffsetMs === 0 ? chartColors.position : chartColors.axis;
+  context.fillText(
+    chartPanOffsetMs === 0
+      ? "LIVE"
+      : formatTimeLabel(range.endTime),
+    padding.left + plotWidth,
+    height - 4,
+  );
   context.restore();
 
   drawReference(
@@ -389,80 +712,255 @@ function drawWaveChart(canvas, samples, options) {
     maximum,
   );
   for (const series of options.series) {
-    drawSeries(context, samples, series.key, series.color, mapX, mapY);
+    drawSeries(
+      context,
+      samples,
+      series,
+      mapX,
+      mapY,
+      plotWidth,
+    );
   }
-
-  if (options.coastDots) {
-    context.save();
-    context.fillStyle = chartColors.coast;
-    for (const sample of samples) {
-      if (!sample.coasting || sample.position == null) continue;
-      context.beginPath();
-      context.arc(mapX(sample.t), mapY(sample.position), 1.8, 0, Math.PI * 2);
-      context.fill();
-    }
-    context.restore();
-  }
+  drawChartOverlay(
+    context,
+    samples,
+    options,
+    padding,
+    plotWidth,
+    plotHeight,
+    mapX,
+    mapY,
+  );
 }
 
-function historyForCurrentWindow() {
-  if (!telemetryHistory.length) return [];
-  const latestTime = telemetryHistory[telemetryHistory.length - 1].t;
-  const startTime = latestTime - historyWindowMs;
-  return telemetryHistory.filter((sample) => sample.t >= startTime);
+function maximumFinite(values, fallback) {
+  let maximum = fallback;
+  for (const value of values) {
+    if (Number.isFinite(value)) maximum = Math.max(maximum, value);
+  }
+  return maximum;
 }
 
 function renderCharts() {
-  const samples = historyForCurrentWindow();
-  const absoluteVelocity = samples
-    .map((sample) => Math.abs(sample.velocity ?? 0))
-    .filter(Number.isFinite);
-  const velocityLimit = Math.max(100, Math.min(800, Math.ceil(Math.max(0, ...absoluteVelocity) / 100) * 100));
-  const timingValues = samples.flatMap((sample) => [sample.detect, sample.latency]).filter(Number.isFinite);
-  const timingMaximum = Math.max(100, Math.min(500, Math.ceil(Math.max(0, ...timingValues) / 50) * 50));
-  const target = samples.length ? samples[samples.length - 1].target : 0.5;
+  const range = chartViewRange();
+  const samples = historyForCurrentWindow(range);
+  const absoluteVelocity = samples.map((sample) =>
+    Math.abs(sample.velocity ?? 0),
+  );
+  const velocityMaximum = maximumFinite(absoluteVelocity, 0);
+  const velocityLimit = Math.max(
+    100,
+    Math.min(800, Math.ceil(velocityMaximum / 100) * 100),
+  );
+  const timingValues = [];
+  for (const sample of samples) {
+    timingValues.push(sample.detect, sample.latency);
+  }
+  const timingMaximum = Math.max(
+    100,
+    Math.min(
+      500,
+      Math.ceil(maximumFinite(timingValues, 0) / 50) * 50,
+    ),
+  );
+  const target = samples.length
+    ? samples[samples.length - 1].target
+    : 0.5;
 
-  drawWaveChart($("#position-chart"), samples, {
+  drawWaveChart($("#position-chart"), samples, range, {
     minimum: 0,
     maximum: 1,
     reference: target ?? 0.5,
     formatAxis: (value) => `${Math.round(value * 100)}%`,
-    series: [{ key: "position", color: chartColors.position }],
-    coastDots: true,
+    series: [
+      {
+        key: "position",
+        label: "位置",
+        color: chartColors.position,
+        pointColor: chartColors.positionPoint,
+        formatValue: (value) => `${(value * 100).toFixed(2)}%`,
+      },
+    ],
   });
-  drawWaveChart($("#velocity-chart"), samples, {
+  drawWaveChart($("#velocity-chart"), samples, range, {
     minimum: -velocityLimit,
     maximum: velocityLimit,
     reference: 0,
     formatAxis: (value) => `${Math.round(value)}`,
-    series: [{ key: "velocity", color: chartColors.velocity }],
+    series: [
+      {
+        key: "velocity",
+        label: "速度",
+        color: chartColors.velocity,
+        pointColor: chartColors.velocityPoint,
+        formatValue: (value) => `${value.toFixed(1)} px/s`,
+      },
+    ],
   });
-  drawWaveChart($("#fps-chart"), samples, {
+  drawWaveChart($("#fps-chart"), samples, range, {
     minimum: 0,
     maximum: 60,
     reference: 30,
     formatAxis: (value) => `${Math.round(value)}`,
-    series: [{ key: "fps", color: chartColors.fps }],
+    series: [
+      {
+        key: "fps",
+        label: "FPS",
+        color: chartColors.fps,
+        pointColor: chartColors.fpsPoint,
+        formatValue: (value) => value.toFixed(2),
+      },
+    ],
   });
-  drawWaveChart($("#timing-chart"), samples, {
+  drawWaveChart($("#timing-chart"), samples, range, {
     minimum: 0,
     maximum: timingMaximum,
     reference: null,
     formatAxis: (value) => `${Math.round(value)}`,
     series: [
-      { key: "detect", color: chartColors.detect },
-      { key: "latency", color: chartColors.latency },
+      {
+        key: "detect",
+        label: "检测",
+        color: chartColors.detect,
+        pointColor: chartColors.detectPoint,
+        formatValue: (value) => `${value.toFixed(1)} ms`,
+      },
+      {
+        key: "latency",
+        label: "图传",
+        color: chartColors.latency,
+        pointColor: chartColors.latencyPoint,
+        formatValue: (value) => `${value.toFixed(1)} ms`,
+      },
     ],
   });
 }
 
-function chartAnimationFrame(timestamp) {
-  if (chartsDirty && timestamp - lastChartDrawMs >= 100) {
+function updateChartLiveState() {
+  const liveButton = $("#chart-live");
+  const live = chartPanOffsetMs === 0;
+  liveButton.classList.toggle("active", live);
+  liveButton.textContent = live ? "LIVE" : "回到实时";
+}
+
+function chartAnimationFrame() {
+  if (chartsDirty) {
     renderCharts();
     chartsDirty = false;
-    lastChartDrawMs = timestamp;
   }
   window.requestAnimationFrame(chartAnimationFrame);
+}
+
+function chartPointerGeometry(canvas, clientX) {
+  const rect = canvas.getBoundingClientRect();
+  const left = 35;
+  const width = Math.max(1, rect.width - left - 9);
+  const ratio = clamp(
+    (clientX - rect.left - left) / width,
+    0,
+    1,
+  );
+  return { ratio, width };
+}
+
+function updateChartWindowButtons() {
+  $$("[data-window-seconds]").forEach((button) => {
+    const buttonWindowMs =
+      Number(button.dataset.windowSeconds) * 1000;
+    button.classList.toggle(
+      "active",
+      Math.abs(buttonWindowMs - historyWindowMs) < 1,
+    );
+  });
+}
+
+function returnChartsToLive() {
+  chartPanOffsetMs = 0;
+  chartHoverTimeMs = null;
+  updateChartLiveState();
+  chartsDirty = true;
+}
+
+function installChartInteraction(canvas) {
+  canvas.addEventListener(
+    "wheel",
+    (event) => {
+      event.preventDefault();
+      if (!telemetryHistory.length) return;
+      const geometry = chartPointerGeometry(
+        canvas,
+        event.clientX,
+      );
+      const oldRange = chartViewRange();
+      const anchorTime =
+        oldRange.startTime +
+        geometry.ratio * historyWindowMs;
+      const zoomFactor = Math.exp(event.deltaY * 0.0012);
+      const nextWindowMs = clamp(
+        historyWindowMs * zoomFactor,
+        MIN_CHART_WINDOW_MS,
+        MAX_CHART_WINDOW_MS,
+      );
+      const nextEndTime =
+        anchorTime + (1 - geometry.ratio) * nextWindowMs;
+      historyWindowMs = nextWindowMs;
+      chartPanOffsetMs = clampChartPan(
+        chartLatestTime() - nextEndTime,
+        historyWindowMs,
+      );
+      chartHoverTimeMs = anchorTime;
+      updateChartWindowButtons();
+      updateChartLiveState();
+      chartsDirty = true;
+    },
+    { passive: false },
+  );
+
+  canvas.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    chartDragging = true;
+    chartDragStartX = event.clientX;
+    chartDragStartPanMs = chartPanOffsetMs;
+    canvas.classList.add("dragging");
+    canvas.setPointerCapture(event.pointerId);
+  });
+
+  canvas.addEventListener("pointermove", (event) => {
+    if (!telemetryHistory.length) return;
+    const geometry = chartPointerGeometry(
+      canvas,
+      event.clientX,
+    );
+    if (chartDragging) {
+      const deltaX = event.clientX - chartDragStartX;
+      chartPanOffsetMs = clampChartPan(
+        chartDragStartPanMs +
+          (deltaX / geometry.width) * historyWindowMs,
+      );
+      updateChartLiveState();
+    }
+    const range = chartViewRange();
+    chartHoverTimeMs =
+      range.startTime + geometry.ratio * historyWindowMs;
+    chartsDirty = true;
+  });
+
+  const finishDrag = (event) => {
+    if (!chartDragging) return;
+    chartDragging = false;
+    canvas.classList.remove("dragging");
+    if (canvas.hasPointerCapture(event.pointerId)) {
+      canvas.releasePointerCapture(event.pointerId);
+    }
+  };
+  canvas.addEventListener("pointerup", finishDrag);
+  canvas.addEventListener("pointercancel", finishDrag);
+  canvas.addEventListener("pointerleave", () => {
+    if (chartDragging) return;
+    chartHoverTimeMs = null;
+    chartsDirty = true;
+  });
+  canvas.addEventListener("dblclick", returnChartsToLive);
 }
 
 async function action(name, body = {}) {
@@ -555,7 +1053,15 @@ function renderState(state) {
   ui.activityLog.scrollTop = ui.activityLog.scrollHeight;
 
   $$("button").forEach((button) => {
-    if (button.classList.contains("tab")) return;
+    if (
+      button.classList.contains("tab") ||
+      button.id === "inspector-toggle" ||
+      button.id === "inspector-close" ||
+      button.id === "chart-live" ||
+      button.dataset.windowSeconds
+    ) {
+      return;
+    }
     button.disabled = operationRunning;
   });
 
@@ -629,6 +1135,23 @@ $$(".tab").forEach((tab) => {
   });
 });
 
+function setInspectorOpen(open) {
+  const inspector = $("#inspector");
+  const backdrop = $("#inspector-backdrop");
+  const toggle = $("#inspector-toggle");
+  inspector.classList.toggle("open", open);
+  backdrop.classList.toggle("open", open);
+  inspector.setAttribute("aria-hidden", String(!open));
+  toggle.setAttribute("aria-expanded", String(open));
+}
+
+$("#inspector-toggle").addEventListener("click", () => setInspectorOpen(true));
+$("#inspector-close").addEventListener("click", () => setInspectorOpen(false));
+$("#inspector-backdrop").addEventListener("click", () => setInspectorOpen(false));
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") setInspectorOpen(false);
+});
+
 $("#preview-button").addEventListener("click", () => requestAction("preview", {}, "正在连接低延迟预览"));
 $("#record-button").addEventListener("click", () => requestAction("record", {}, "正在切换到录像模式"));
 $("#stop-record-button").addEventListener("click", () => requestAction("stop_record", {}, "正在封装录像并恢复预览"));
@@ -644,10 +1167,13 @@ $$("[data-marker]").forEach((button) => {
 $$("[data-window-seconds]").forEach((button) => {
   button.addEventListener("click", () => {
     historyWindowMs = Number(button.dataset.windowSeconds) * 1000;
-    $$("[data-window-seconds]").forEach((item) => item.classList.toggle("active", item === button));
-    chartsDirty = true;
+    updateChartWindowButtons();
+    returnChartsToLive();
   });
 });
+
+$("#chart-live").addEventListener("click", returnChartsToLive);
+$$(".wave-panel canvas").forEach(installChartInteraction);
 
 ui.form.addEventListener("input", () => {
   formDirty = true;

@@ -52,7 +52,8 @@ class OperatorConsoleHttpTests(unittest.TestCase):
     def test_serves_dashboard_state_and_frame(self):
         with urlopen(self.base_url + "/", timeout=2) as response:
             html = response.read().decode("utf-8")
-        self.assertIn("PIPE / VISION", html)
+        self.assertIn('id="metric-position"', html)
+        self.assertIn('id="position-chart"', html)
 
         with urlopen(self.base_url + "/api/state", timeout=2) as response:
             state = json.loads(response.read().decode("utf-8"))
