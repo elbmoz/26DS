@@ -111,6 +111,38 @@ def _wait_for_status(receiver, timeout, bridge):
             return status
 
 
+def _subscribe_until_ack(
+    receiver,
+    device_ip,
+    control_port,
+    token,
+    timeout,
+    bridge,
+    retry_interval=1.0,
+):
+    """Retry subscription while the MaixCAM finishes booting its app."""
+    deadline = time.monotonic() + max(0.0, float(timeout))
+    retry_interval = max(0.1, float(retry_interval))
+    while True:
+        _raise_if_stop_requested(bridge)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0.0:
+            return None
+        request_id = receiver.subscribe(device_ip, control_port, token)
+        ack = receiver.wait_for_ack(
+            request_id,
+            timeout=min(0.5, remaining),
+        )
+        _raise_if_stop_requested(bridge)
+        if ack is not None:
+            return ack
+
+        retry_at = min(deadline, time.monotonic() + retry_interval)
+        while time.monotonic() < retry_at:
+            _raise_if_stop_requested(bridge)
+            time.sleep(min(0.1, retry_at - time.monotonic()))
+
+
 def _read_latest_frame(pipeline, timeout, bridge):
     deadline = time.monotonic() + max(0.0, float(timeout))
     while True:
@@ -264,13 +296,14 @@ def main(argv=None):
     receiver.start()
     try:
         if args.device_ip:
-            subscribe_id = receiver.subscribe(
-                args.device_ip, args.control_port, args.token
+            subscribe_ack = _subscribe_until_ack(
+                receiver,
+                args.device_ip,
+                args.control_port,
+                args.token,
+                timeout=args.discovery_timeout,
+                bridge=bridge,
             )
-            subscribe_ack = receiver.wait_for_ack(
-                subscribe_id, timeout=2.0
-            )
-            _raise_if_stop_requested(bridge)
             if subscribe_ack and subscribe_ack.get("ok"):
                 print(
                     "telemetry subscription established:",

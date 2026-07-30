@@ -14,7 +14,10 @@ REFERENCE_WIDTH = 640
 REFERENCE_HEIGHT = 480
 CAMERA_WIDTH = 480
 CAMERA_HEIGHT = 360
-CAMERA_FPS = 80
+# The current GC4653 firmware exposes practical 30/60 FPS sensor modes.
+# Requesting 50 falls back to the 30 FPS mode, so use the 60 FPS mode and keep
+# the independent UART deadline at 50 Hz.
+CAMERA_FPS = 60
 # The current camera + RTSP encoder pipeline requires one capture buffer.
 # Two buffers make VENC initialization fail on this MaixCAM image.
 CAMERA_BUFFER_COUNT = 1
@@ -62,9 +65,12 @@ CAMERA_GAIN = None
 # The camera is rigidly mounted to the chassis.  The pipe rotates around an
 # almost fixed image-space centre, so the colour blob estimates angle while
 # the mechanical centre and travel length keep the control scale stable.
-ROI = _roi(45, 112, 500, 70)
-AXIS_START = _point(70, 147)
-AXIS_END = _point(520, 147)
+# 2026-07-30 live re-calibration after the endpoint screws were replaced by
+# black tape.  These fallback endpoints are the two tape centres in the
+# 640x480 reference image; the live right endpoint is updated below.
+ROI = _roi(30, 115, 495, 48)
+AXIS_START = _point(35, 132)
+AXIS_END = _point(519, 144)
 TARGET_POSITION = 0.50
 
 # The camera, pivot and pipe travel are mechanically fixed.  Detect only a
@@ -72,32 +78,62 @@ TARGET_POSITION = 0.50
 # the calibrated centre and full travel length remain constant.
 PIPE_POSE_ENABLED = True
 REQUIRE_VALID_PIPE_POSE = True
+PIPE_POSE_MODE = "right_tape"
+
+# The former endpoint screws have been removed.  The left black tape marker
+# is camera-fixed and the right marker follows pipe rotation.  Black pixels
+# on the right merge into the dark motor/cable background, so detect the
+# green-to-black boundary immediately inside the right tape instead.  Its
+# right edge is the stable tape endpoint.
+PIPE_TAPE_LEFT_ENDPOINT = AXIS_START
+PIPE_TAPE_RIGHT_ENDPOINT = AXIS_END
+PIPE_TAPE_RIGHT_SEARCH_ROI = _roi(425, 95, 105, 105)
+PIPE_TAPE_LAB_THRESHOLDS = (
+    (5, 90, -55, -12, -15, 40),
+)
+PIPE_TAPE_DETECT_INTERVAL_FRAMES = 3
+PIPE_TAPE_MIN_WIDTH_PX = _sx(30)
+PIPE_TAPE_MAX_WIDTH_PX = _sx(150)
+PIPE_TAPE_MIN_HEIGHT_PX = _sy(8)
+PIPE_TAPE_MAX_HEIGHT_PX = _sy(48)
+PIPE_TAPE_MIN_PIXELS = _area(60)
+PIPE_TAPE_X_STRIDE = 4
+PIPE_TAPE_Y_STRIDE = 3
+PIPE_TAPE_EXPECTED_RIGHT_X = _sx(519)
+PIPE_TAPE_MAX_RIGHT_X_DISTANCE_PX = _sx(16)
+PIPE_TAPE_MIN_AXIS_LENGTH_PX = _sx(430)
+PIPE_TAPE_MAX_AXIS_LENGTH_PX = _sx(535)
+PIPE_TAPE_ENDPOINT_FROM_BLOB_RIGHT_EDGE = True
+# The endpoint crop itself ends at the tape centre, so its clipped green
+# component right edge already represents the calibrated control endpoint.
+PIPE_TAPE_ENDPOINT_X_OFFSET_PX = 0
+
 PIPE_FIXED_SEARCH_ROI = True
-PIPE_SEARCH_ROI = _roi(175, 117, 240, 59)
+PIPE_SEARCH_ROI = _roi(225, 120, 135, 42)
 PIPE_LAB_THRESHOLDS = (
     (5, 90, -55, -12, -15, 40),
 )
-PIPE_DETECT_INTERVAL_FRAMES = 5
-PIPE_MIN_LENGTH_PX = _sx(80)
-PIPE_MAX_LENGTH_PX = _sx(270)
-PIPE_MIN_WIDTH_PX = _sy(8)
-PIPE_MAX_WIDTH_PX = _sy(55)
-PIPE_MIN_ASPECT = 3.0
-PIPE_MIN_PIXELS = _area(250)
+PIPE_DETECT_INTERVAL_FRAMES = 6
+PIPE_MIN_LENGTH_PX = _sx(55)
+PIPE_MAX_LENGTH_PX = _sx(155)
+PIPE_MIN_WIDTH_PX = _sy(6)
+PIPE_MAX_WIDTH_PX = _sy(35)
+PIPE_MIN_ASPECT = 2.5
+PIPE_MIN_PIXELS = _area(100)
 PIPE_MERGE_BLOBS = False
 PIPE_MERGE_MARGIN = 0
 # The narrow fixed crop excludes the green tabletop and almost all PCB area.
 # Prefer the longest narrow component; no wide-area centre search is needed.
-PIPE_EXPECTED_CENTER = _point(295, 147)
+PIPE_EXPECTED_CENTER = _point(292, 139)
 PIPE_MAX_CENTER_DISTANCE_PX = 0
-PIPE_MAX_ABS_ANGLE_DEG = 6
+PIPE_MAX_ABS_ANGLE_DEG = 8
 # Use the detected component only for angle.  Its visible ends change with
 # glare, the ball and hands, but the physical pipe centre/length do not.
-PIPE_FIXED_AXIS_CENTER = _point(295, 147)
+PIPE_FIXED_AXIS_CENTER = _point(289, 139)
 PIPE_FIXED_AXIS_LENGTH_PX = _sx(450)
 # The detector-scale pipe is about 335 x 23 px.  A 4 x 3 stride still leaves
 # roughly 84 x 8 samples while cutting the wide green pass nearly in half.
-PIPE_X_STRIDE = 4
+PIPE_X_STRIDE = 5
 PIPE_Y_STRIDE = 3
 # Kept for the generic detector path; fixed-search mode never builds this
 # adaptive ROI and never enters a broad fallback.
@@ -112,7 +148,7 @@ PIPE_AXIS_INSET_PX = 0
 # close to the physical moving pipe: the fixed axis already represents the
 # usable pipe length, and the ball needs only a modest radius allowance above
 # and below it.  Pose acquisition has its own larger search margins above.
-PIPE_ROI_ALONG_MARGIN_PX = _sx(4)
+PIPE_ROI_ALONG_MARGIN_PX = 0
 PIPE_ROI_LATERAL_MARGIN_PX = _sy(16)
 PIPE_MAX_STALE_FRAMES = 9
 # Ignored in fixed-search mode; retained for the reusable generic class.
@@ -127,7 +163,7 @@ BALL_LAB_THRESHOLDS = (
 )
 
 # Native LAB blob search and geometry rejection.
-LOCAL_SEARCH_WIDTH_PX = _sx(100)
+LOCAL_SEARCH_WIDTH_PX = _sx(80)
 # Once locked, follow both predicted x and y.  This prevents a tilted pipe's
 # tall axis-aligned bounding box from making every local search nearly full.
 LOCAL_SEARCH_HEIGHT_PX = _sy(48)
@@ -151,6 +187,11 @@ BLOB_MAX_ASPECT = 2.8
 # component, while merging joins it to the adjacent black pipe rail.
 BLOB_MERGE_BLOBS = False
 BLOB_MERGE_MARGIN = 3
+# The steel ball remains 18--26 detector pixels across.  A 3 x 3 sparse LAB
+# pass still samples it densely while reducing the full-pipe acquisition work
+# by 56% versus the former 2 x 2 scan.
+BLOB_X_STRIDE = 3
+BLOB_Y_STRIDE = 3
 # In the rigid vehicle lighting, the accepted neutral LAB island is the dark
 # right-hand part of the mirrored ball rather than its geometric centre.
 # Four manually aligned points from stream_20260730_131248 measured a
@@ -164,7 +205,7 @@ BLOB_CENTER_BIAS_MIN_QUALITY = _area(70)
 # smaller than 10 px.  A circle alone is not sufficient: the green pipe
 # texture produces many Hough peaks, so sampled RGB chroma must also look
 # neutral/metallic before a circle is handed to the tracker.
-CIRCLE_RECOVERY_ENABLED = True
+CIRCLE_RECOVERY_ENABLED = False
 CIRCLE_THRESHOLD = 1100
 CIRCLE_MIN_RADIUS = _sx(11)
 CIRCLE_MAX_RADIUS = _sx(18)
@@ -198,9 +239,9 @@ CIRCLE_TRIGGER_MAX_AXIS_DISTANCE_PX = _sy(12)
 # arc.  Move only endpoint circle candidates inward; their untouched raw
 # coordinates remain attached to the tuple for fixture rejection.
 CIRCLE_ENDPOINT_POSITION = 0.12
-CIRCLE_ENDPOINT_INWARD_BIAS_PX = _sx(10)
-CIRCLE_LEFT_ENDPOINT_INWARD_BIAS_PX = _sx(10)
-CIRCLE_RIGHT_ENDPOINT_INWARD_BIAS_PX = _sx(18)
+CIRCLE_ENDPOINT_INWARD_BIAS_PX = 0
+CIRCLE_LEFT_ENDPOINT_INWARD_BIAS_PX = 0
+CIRCLE_RIGHT_ENDPOINT_INWARD_BIAS_PX = 0
 # The dynamically updated ball ROI is centred on the pipe axis.  Ignore
 # circular ruler/PCB detail below it while retaining the ball above the axis.
 CIRCLE_MAX_ABOVE_ROI_CENTER_PX = _sy(24)
@@ -237,28 +278,14 @@ POSITION_ALPHA = 0.72
 VELOCITY_BETA = 0.14
 LATERAL_ALPHA = 0.55
 CONFIRM_FRAMES = 2
-COAST_FRAMES = 6
+COAST_FRAMES = 2
 TRACK_MEMORY_FRAMES = 8
 
 # The two endpoint screws are rigidly attached to the pipe.  Express their
 # centres in pipe coordinates so the exclusions rotate with the measured
 # pipe angle.  The 14 px reference radius masks only the screw/Hough halo;
 # the nearest physical ball centres remain about 20--25 reference pixels away.
-FIXTURE_EXCLUSION_ZONES = (
-    # Left chassis/bracket arc outside the physical travel.  Hough used to
-    # move this raw -2.4% peak inward and report it as a 0% ball.
-    (-0.024, 3.0 * CAMERA_HEIGHT / REFERENCE_HEIGHT, _sx(10)),
-    (0.024, -4.0 * CAMERA_HEIGHT / REFERENCE_HEIGHT, _sx(8)),
-    # The printed "2"/dark scale just inside the left stop is another rigid
-    # circular nuisance in the mounted view.  A short blind patch here is
-    # safer than reporting a stationary endpoint as a ball; prediction coasts
-    # across it if a moving ball traverses the patch.
-    (0.052, 0.0, _sx(8)),
-    # The mounted-car recordings put the persistent outer right fixture at
-    # x~=398 while the live pipe axis ends at x~=390: position 1.024, not the
-    # old desktop-derived 0.958.  That old coordinate masked the real ball.
-    (1.024, -3.0 * CAMERA_HEIGHT / REFERENCE_HEIGHT, _sx(9)),
-)
+FIXTURE_EXCLUSION_ZONES = ()
 # Strong blob evidence may cross a fixture core.  Hough-only peaks (the
 # normal screw false positive) still cannot acquire there.
 # The final fixed-car empty-pipe run proved that the endpoint screw itself
@@ -291,6 +318,8 @@ UART_TX_PIN = "A19"
 UART_RX_PIN = "A18"
 UART_BAUD = 115200
 TELEMETRY_HZ = 50
+# Disabled because the camera channel above is the single timing source.
+CONTROL_LOOP_HZ = 0
 
 # Preview is deliberately slower than detection so JPEG streaming to
 # MaixVision cannot throttle the control-rate loop.
@@ -301,10 +330,12 @@ CONSOLE_HZ = 2
 # Competition debug stream.  Detection keeps its 480 x 360 channel and
 # control rates; this lower-rate secondary channel prevents RTSP/VENC/network
 # work from saturating the single CPU while the operator console is open.
-STREAM_WIDTH = 320
-STREAM_HEIGHT = 240
-STREAM_FPS = 30
-STREAM_BITRATE = 800000
+STREAM_WIDTH = 448
+STREAM_HEIGHT = 336
+# Windows renders at 20 FPS, so encoding 30 FPS only competes with the
+# 60-FPS control channel without improving the visible dashboard motion.
+STREAM_FPS = 20
+STREAM_BITRATE = 1000000
 # Keep the RTSP camera channel at the minimum supported buffering.  The
 # Windows receiver also discards stale decoded frames instead of letting a
 # preview backlog build up.

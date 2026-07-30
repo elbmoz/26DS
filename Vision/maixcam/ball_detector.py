@@ -65,6 +65,8 @@ class LabBallDetector:
         max_aspect=4.5,
         merge_blobs=False,
         merge_margin=3,
+        blob_x_stride=2,
+        blob_y_stride=2,
         circle_enabled=False,
         circle_threshold=2000,
         circle_min_radius=10,
@@ -116,6 +118,8 @@ class LabBallDetector:
         self.max_aspect = float(max_aspect)
         self.merge_blobs = bool(merge_blobs)
         self.merge_margin = int(merge_margin)
+        self.blob_x_stride = max(1, int(blob_x_stride))
+        self.blob_y_stride = max(1, int(blob_y_stride))
         self.circle_enabled = bool(circle_enabled)
         self.circle_threshold = int(circle_threshold)
         self.circle_min_radius = int(circle_min_radius)
@@ -243,8 +247,8 @@ class LabBallDetector:
         return img.find_blobs(
             self.thresholds,
             roi=list(roi),
-            x_stride=2,
-            y_stride=2,
+            x_stride=self.blob_x_stride,
+            y_stride=self.blob_y_stride,
             area_threshold=max(4, self.min_pixels),
             pixels_threshold=self.min_pixels,
             merge=self.merge_blobs,
@@ -476,19 +480,22 @@ class LabBallDetector:
     def detect(self, img, predicted_x=None, predicted_y=None):
         """Return candidates, accepted blobs, search ROI and raw blob count.
 
-        While locked, a small local ROI is searched first.  If it contains no
-        accepted candidate, a full-pipe search is performed in the same frame.
+        While locked, alternate a small local search with a direct broad
+        retry after misses.  The broad retry replaces that frame's local pass
+        instead of running both searches back-to-back, bounding tail latency.
         """
         if predicted_x is None:
             self._untracked_frame_count += 1
             self._tracked_frame_count = 0
             self._local_miss_count = 0
             search_roi = self.full_roi
+            local_roi = None
             used_local = False
+            direct_broad_retry = False
         else:
             self._untracked_frame_count = 0
             self._tracked_frame_count += 1
-            search_roi = local_search_roi(
+            local_roi = local_search_roi(
                 self.full_roi,
                 predicted_x,
                 self.local_width,
@@ -497,12 +504,24 @@ class LabBallDetector:
                 center_y=predicted_y,
                 height=self.local_height,
             )
+            direct_broad_retry = (
+                local_roi != self.full_roi
+                and self._local_miss_count > 0
+                and (
+                    (self._local_miss_count + 1)
+                    % self.local_fallback_interval_misses
+                    == 0
+                )
+            )
+            search_roi = (
+                self.full_roi if direct_broad_retry else local_roi
+            )
             used_local = search_roi != self.full_roi
 
         raw_blobs = self._find(img, search_roi)
         candidates, accepted = self._convert(raw_blobs)
         raw_count = len(raw_blobs)
-        fell_back = False
+        fell_back = bool(direct_broad_retry)
         circle_candidates = []
         circles = []
         # Decide circle recovery from the high-value local result, before a
@@ -522,24 +541,14 @@ class LabBallDetector:
             )
             need_circle = not has_strong_blob
 
-        circle_roi = search_roi
-        if used_local and candidates:
-            self._local_miss_count = 0
-        elif used_local:
-            self._local_miss_count += 1
-            broad_retry_due = (
-                self._local_miss_count
-                % self.local_fallback_interval_misses
-                == 0
-            )
-            if broad_retry_due:
-                full_blobs = self._find(img, self.full_roi)
-                candidates, accepted = self._convert(full_blobs)
-                raw_count += len(full_blobs)
-                search_roi = self.full_roi
-                fell_back = True
-                if candidates:
-                    self._local_miss_count = 0
+        # Hough recovery still uses the predicted local window even when the
+        # cheap LAB pass performs a direct broad retry.
+        circle_roi = local_roi if local_roi is not None else search_roi
+        if predicted_x is not None:
+            if candidates:
+                self._local_miss_count = 0
+            else:
+                self._local_miss_count += 1
 
         # Circle acquisition is intentionally additive.  A fixed screw may
         # survive the LAB filter as a small candidate; that must not suppress

@@ -599,8 +599,32 @@ class BallTrackerCoreTests(unittest.TestCase):
         self.assertTrue(second["fell_back"])
         self.assertEqual(
             [roi[2] for roi in image.blob_rois],
-            [140, 140, 500],
+            [140, 500],
         )
+
+    def test_blob_stride_is_configurable(self):
+        class FakeImage:
+            def __init__(self):
+                self.calls = []
+
+            def find_blobs(self, _thresholds, **kwargs):
+                self.calls.append(kwargs)
+                return []
+
+        image = FakeImage()
+        detector = LabBallDetector(
+            640,
+            480,
+            (45, 112, 500, 70),
+            ((0, 85, -22, 22, -20, 20),),
+            blob_x_stride=3,
+            blob_y_stride=4,
+        )
+
+        detector.detect(image)
+
+        self.assertEqual(image.calls[0]["x_stride"], 3)
+        self.assertEqual(image.calls[0]["y_stride"], 4)
 
     def test_broad_circle_acquisition_can_be_disabled(self):
         class FakeImage:

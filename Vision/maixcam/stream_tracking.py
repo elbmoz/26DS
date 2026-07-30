@@ -121,6 +121,11 @@ def main():
         )
 
         uart_period_ms = max(1, int(1000 / cfg.TELEMETRY_HZ))
+        loop_period_ms = (
+            max(1, int(1000 / cfg.CONTROL_LOOP_HZ))
+            if cfg.CONTROL_LOOP_HZ > 0
+            else None
+        )
         network_period_ms = max(
             1, int(1000 / cfg.STREAM_TELEMETRY_HZ)
         )
@@ -133,6 +138,7 @@ def main():
         start_ms = time.ticks_ms()
         last_frame_ms = start_ms
         next_uart_ms = start_ms
+        next_loop_ms = start_ms
         next_network_ms = start_ms
         next_status_ms = start_ms
         last_console_ms = 0
@@ -292,6 +298,16 @@ def main():
                 last_preview_ms = now_ms
 
             frame_id += 1
+            if loop_period_ms is not None:
+                pace_now_ms = time.ticks_ms()
+                _, next_loop_ms = periodic_due(
+                    pace_now_ms,
+                    next_loop_ms,
+                    loop_period_ms,
+                )
+                remaining_ms = next_loop_ms - time.ticks_ms()
+                if remaining_ms > 0:
+                    time.sleep_ms(remaining_ms)
     finally:
         exit_type, exit_value, _ = sys.exc_info()
         exit_code = 0

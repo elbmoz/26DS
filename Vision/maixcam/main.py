@@ -6,7 +6,7 @@ import ball_config as cfg
 from ball_detector import LabBallDetector
 from ball_tracker_core import BallTracker
 from loop_timing import periodic_due
-from pipe_pose import GreenPipePoseDetector
+from pipe_pose import GreenPipePoseDetector, TapeEndpointPipePoseDetector
 from stm32_link import Stm32Link
 
 
@@ -75,6 +75,8 @@ def build_detector():
         max_aspect=cfg.BLOB_MAX_ASPECT,
         merge_blobs=cfg.BLOB_MERGE_BLOBS,
         merge_margin=cfg.BLOB_MERGE_MARGIN,
+        blob_x_stride=cfg.BLOB_X_STRIDE,
+        blob_y_stride=cfg.BLOB_Y_STRIDE,
         circle_enabled=cfg.CIRCLE_RECOVERY_ENABLED,
         circle_threshold=cfg.CIRCLE_THRESHOLD,
         circle_min_radius=cfg.CIRCLE_MIN_RADIUS,
@@ -165,6 +167,39 @@ def build_tracker():
 def build_pipe_detector():
     if not cfg.PIPE_POSE_ENABLED:
         return None
+    if cfg.PIPE_POSE_MODE == "right_tape":
+        return TapeEndpointPipePoseDetector(
+            frame_width=cfg.CAMERA_WIDTH,
+            frame_height=cfg.CAMERA_HEIGHT,
+            right_search_roi=cfg.PIPE_TAPE_RIGHT_SEARCH_ROI,
+            fallback_roi=cfg.ROI,
+            fixed_left_endpoint=cfg.PIPE_TAPE_LEFT_ENDPOINT,
+            fallback_right_endpoint=cfg.PIPE_TAPE_RIGHT_ENDPOINT,
+            thresholds=cfg.PIPE_TAPE_LAB_THRESHOLDS,
+            detect_interval_frames=cfg.PIPE_TAPE_DETECT_INTERVAL_FRAMES,
+            min_width_px=cfg.PIPE_TAPE_MIN_WIDTH_PX,
+            max_width_px=cfg.PIPE_TAPE_MAX_WIDTH_PX,
+            min_height_px=cfg.PIPE_TAPE_MIN_HEIGHT_PX,
+            max_height_px=cfg.PIPE_TAPE_MAX_HEIGHT_PX,
+            min_pixels=cfg.PIPE_TAPE_MIN_PIXELS,
+            x_stride=cfg.PIPE_TAPE_X_STRIDE,
+            y_stride=cfg.PIPE_TAPE_Y_STRIDE,
+            expected_right_x=cfg.PIPE_TAPE_EXPECTED_RIGHT_X,
+            max_right_x_distance_px=(
+                cfg.PIPE_TAPE_MAX_RIGHT_X_DISTANCE_PX
+            ),
+            min_axis_length_px=cfg.PIPE_TAPE_MIN_AXIS_LENGTH_PX,
+            max_axis_length_px=cfg.PIPE_TAPE_MAX_AXIS_LENGTH_PX,
+            max_abs_angle_deg=cfg.PIPE_MAX_ABS_ANGLE_DEG,
+            endpoint_from_blob_right_edge=(
+                cfg.PIPE_TAPE_ENDPOINT_FROM_BLOB_RIGHT_EDGE
+            ),
+            endpoint_x_offset_px=cfg.PIPE_TAPE_ENDPOINT_X_OFFSET_PX,
+            smoothing_alpha=cfg.PIPE_SMOOTHING_ALPHA,
+            roi_along_margin_px=cfg.PIPE_ROI_ALONG_MARGIN_PX,
+            roi_lateral_margin_px=cfg.PIPE_ROI_LATERAL_MARGIN_PX,
+            max_stale_frames=cfg.PIPE_MAX_STALE_FRAMES,
+        )
     return GreenPipePoseDetector(
         frame_width=cfg.CAMERA_WIDTH,
         frame_height=cfg.CAMERA_HEIGHT,
@@ -247,6 +282,15 @@ def process_frame(img, now_ms, frame_id, detector, tracker, pipe_detector):
     detection["axis_end"] = tuple(tracker.axis_end)
     detection["pipe"] = pipe_state
     state = tracker.update(detection["candidates"], now_ms)
+    if cfg.REQUIRE_VALID_PIPE_POSE and not pipe_state["valid"]:
+        # Never send a geometrically referenced control error after the pipe
+        # endpoint model has gone stale.  The tracker may keep its internal
+        # memory for fast recovery, but the STM32 sees an explicit invalid
+        # sample until a fresh pipe pose is available again.
+        state = dict(state)
+        state["valid"] = False
+        state["measured"] = False
+        state["coasting"] = False
     return detection, state
 
 
@@ -342,9 +386,15 @@ def main():
     pipe_detector = build_pipe_detector()
 
     send_period_ms = max(1, int(1000 / cfg.TELEMETRY_HZ))
+    loop_period_ms = (
+        max(1, int(1000 / cfg.CONTROL_LOOP_HZ))
+        if cfg.CONTROL_LOOP_HZ > 0
+        else None
+    )
     console_period_ms = max(1, int(1000 / cfg.CONSOLE_HZ))
     preview_period_ms = max(1, int(1000 / cfg.PREVIEW_HZ))
     next_send_ms = time.ticks_ms()
+    next_loop_ms = next_send_ms
     last_console_ms = 0
     last_preview_ms = 0
 
@@ -432,6 +482,16 @@ def main():
             screen.show(img)
             last_preview_ms = now_ms
         frame_id += 1
+        if loop_period_ms is not None:
+            pace_now_ms = time.ticks_ms()
+            _, next_loop_ms = periodic_due(
+                pace_now_ms,
+                next_loop_ms,
+                loop_period_ms,
+            )
+            remaining_ms = next_loop_ms - time.ticks_ms()
+            if remaining_ms > 0:
+                time.sleep_ms(remaining_ms)
 
 
 if __name__ == "__main__":

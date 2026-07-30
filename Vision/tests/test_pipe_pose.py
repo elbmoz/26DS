@@ -9,6 +9,7 @@ sys.path.insert(0, str(MAIXCAM_DIR))
 
 from pipe_pose import (  # noqa: E402
     GreenPipePoseDetector,
+    TapeEndpointPipePoseDetector,
     pose_from_corners,
     roi_from_axis,
 )
@@ -38,6 +39,36 @@ class FakeImage:
         result = self.frames[min(self.calls, len(self.frames) - 1)]
         self.calls += 1
         return result
+
+
+class FakeTapeBlob:
+    def __init__(self, x, y, width, height, pixels, left=None):
+        self._x = x
+        self._y = y
+        self._width = width
+        self._height = height
+        self._pixels = pixels
+        self._left = (
+            int(round(x - width / 2.0)) if left is None else int(left)
+        )
+
+    def x(self):
+        return self._left
+
+    def w(self):
+        return self._width
+
+    def h(self):
+        return self._height
+
+    def pixels(self):
+        return self._pixels
+
+    def cx(self):
+        return self._x
+
+    def cy(self):
+        return self._y
 
 
 def rectangle_corners(center, length, width, angle_deg):
@@ -253,6 +284,126 @@ class PipePoseTests(unittest.TestCase):
             max_center_distance_px=135,
         )
         self.assertFalse(detector.update(image, 0)["measured"])
+
+    def test_right_tape_directly_defines_pipe_endpoints(self):
+        tape = FakeTapeBlob(390, 114, 22, 29, 310)
+        image = FakeImage([[tape]])
+        detector = TapeEndpointPipePoseDetector(
+            480,
+            360,
+            right_search_roi=(368, 52, 42, 94),
+            fallback_roi=(20, 70, 390, 70),
+            fixed_left_endpoint=(26, 94),
+            fallback_right_endpoint=(390, 114),
+            thresholds=((0, 30, -20, 20, -20, 20),),
+            detect_interval_frames=3,
+            min_width_px=8,
+            max_width_px=32,
+            min_height_px=18,
+            max_height_px=48,
+            min_pixels=45,
+            expected_right_x=390,
+            max_right_x_distance_px=21,
+            min_axis_length_px=322,
+            max_axis_length_px=402,
+            smoothing_alpha=1.0,
+            roi_along_margin_px=0,
+            roi_lateral_margin_px=12,
+        )
+
+        state = detector.update(image, 0)
+
+        self.assertTrue(state["measured"])
+        self.assertTrue(state["valid"])
+        self.assertEqual(state["axis_start"], (26.0, 94.0))
+        self.assertEqual(state["axis_end"], (390.0, 114.0))
+        self.assertEqual(state["ball_roi"], (25, 82, 367, 45))
+        self.assertEqual(image.rois, [(368, 52, 42, 94)])
+
+    def test_right_tape_detector_rejects_short_background_fragment(self):
+        background = FakeTapeBlob(390, 82, 20, 12, 90)
+        image = FakeImage([[background]])
+        detector = TapeEndpointPipePoseDetector(
+            480,
+            360,
+            right_search_roi=(368, 52, 42, 94),
+            fallback_roi=(20, 70, 390, 70),
+            fixed_left_endpoint=(26, 94),
+            fallback_right_endpoint=(390, 114),
+            thresholds=((0, 30, -20, 20, -20, 20),),
+            min_height_px=18,
+            min_axis_length_px=322,
+            max_axis_length_px=402,
+        )
+
+        state = detector.update(image, 0)
+
+        self.assertFalse(state["measured"])
+        self.assertFalse(state["valid"])
+
+    def test_right_tape_pose_is_smoothed_and_rate_limited(self):
+        first = FakeTapeBlob(390, 114, 22, 29, 310)
+        moved = FakeTapeBlob(390, 126, 22, 29, 310)
+        image = FakeImage([[first], [moved]])
+        detector = TapeEndpointPipePoseDetector(
+            480,
+            360,
+            right_search_roi=(368, 52, 42, 94),
+            fallback_roi=(20, 70, 390, 70),
+            fixed_left_endpoint=(26, 94),
+            fallback_right_endpoint=(390, 114),
+            thresholds=((0, 30, -20, 20, -20, 20),),
+            detect_interval_frames=3,
+            min_axis_length_px=322,
+            max_axis_length_px=402,
+            smoothing_alpha=0.5,
+        )
+
+        first_state = detector.update(image, 0)
+        skipped = detector.update(image, 1)
+        moved_state = detector.update(image, 3)
+
+        self.assertTrue(first_state["measured"])
+        self.assertFalse(skipped["measured"])
+        self.assertEqual(image.calls, 2)
+        self.assertAlmostEqual(moved_state["axis_end"][1], 120.0)
+
+    def test_green_blob_right_edge_marks_black_tape_boundary(self):
+        green_fragment = FakeTapeBlob(
+            356,
+            108,
+            48,
+            15,
+            420,
+            left=332,
+        )
+        image = FakeImage([[green_fragment]])
+        detector = TapeEndpointPipePoseDetector(
+            480,
+            360,
+            right_search_roi=(319, 71, 90, 79),
+            fallback_roi=(20, 70, 390, 70),
+            fixed_left_endpoint=(26, 99),
+            fallback_right_endpoint=(389, 108),
+            thresholds=((5, 90, -55, -12, -15, 40),),
+            min_width_px=22,
+            max_width_px=112,
+            min_height_px=6,
+            max_height_px=36,
+            min_pixels=34,
+            expected_right_x=389,
+            max_right_x_distance_px=21,
+            min_axis_length_px=322,
+            max_axis_length_px=402,
+            endpoint_from_blob_right_edge=True,
+            endpoint_x_offset_px=10,
+            smoothing_alpha=1.0,
+        )
+
+        state = detector.update(image, 0)
+
+        self.assertTrue(state["measured"])
+        self.assertEqual(state["axis_end"], (389.0, 108.0))
 
 
 if __name__ == "__main__":
