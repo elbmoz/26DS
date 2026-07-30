@@ -648,6 +648,40 @@ class BallTrackerCoreTests(unittest.TestCase):
         self.assertEqual(image.calls[0]["x_stride"], 3)
         self.assertEqual(image.calls[0]["y_stride"], 4)
 
+    def test_broad_and_local_blob_strides_are_independent(self):
+        class FakeImage:
+            def __init__(self):
+                self.calls = []
+
+            def find_blobs(self, _thresholds, **kwargs):
+                self.calls.append(kwargs)
+                return []
+
+        image = FakeImage()
+        detector = LabBallDetector(
+            640,
+            480,
+            (45, 112, 500, 70),
+            ((0, 85, -22, 22, -20, 20),),
+            local_width=140,
+            blob_x_stride=3,
+            blob_y_stride=3,
+            broad_blob_x_stride=5,
+            broad_blob_y_stride=4,
+            broad_lateral_margin_px=20,
+        )
+        detector.set_axis((45, 140), (545, 140))
+
+        detector.detect(image)
+        detector.detect(image, predicted_x=300, predicted_y=145)
+
+        self.assertEqual(image.calls[0]["x_stride"], 5)
+        self.assertEqual(image.calls[0]["y_stride"], 4)
+        self.assertEqual(image.calls[1]["x_stride"], 3)
+        self.assertEqual(image.calls[1]["y_stride"], 3)
+        self.assertEqual(tuple(image.calls[0]["roi"]), (45, 120, 500, 40))
+        self.assertEqual(tuple(image.calls[1]["roi"]), (230, 112, 140, 70))
+
     def test_broad_circle_acquisition_can_be_disabled(self):
         class FakeImage:
             def __init__(self):

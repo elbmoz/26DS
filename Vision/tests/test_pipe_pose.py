@@ -11,6 +11,7 @@ from pipe_pose import (  # noqa: E402
     GreenPipePoseDetector,
     TapeEndpointPipePoseDetector,
     pose_from_corners,
+    quadrilateral_from_axis,
     roi_from_axis,
 )
 
@@ -92,6 +93,26 @@ def rectangle_corners(center, length, width, angle_deg):
 
 
 class PipePoseTests(unittest.TestCase):
+    def test_quadrilateral_matches_rotated_effective_strip(self):
+        quad = quadrilateral_from_axis(
+            (10, 20),
+            (90, 20),
+            100,
+            80,
+            along_margin_px=0,
+            lateral_margin_px=5,
+        )
+
+        self.assertEqual(
+            quad,
+            (
+                (10.0, 25.0),
+                (90.0, 25.0),
+                (90.0, 15.0),
+                (10.0, 15.0),
+            ),
+        )
+
     def test_pose_uses_major_axis_without_corner_order_dependency(self):
         corners = rectangle_corners((320, 170), 420, 28, -6)
         shuffled = [corners[2], corners[0], corners[3], corners[1]]
@@ -459,6 +480,54 @@ class PipePoseTests(unittest.TestCase):
         self.assertEqual(state["axis_end"], (397.0, 108.0))
         self.assertEqual(state["ball_roi"][0], 13)
 
+    def test_outer_green_edge_wins_over_internal_tape_shadow(self):
+        shadow = FakeTapeBlob(
+            374,
+            93,
+            48,
+            24,
+            500,
+            left=350,
+        )
+        outer_green = FakeTapeBlob(
+            407,
+            93,
+            33,
+            24,
+            360,
+            left=390,
+        )
+        image = FakeImage([[shadow, outer_green]])
+        detector = TapeEndpointPipePoseDetector(
+            480,
+            360,
+            right_search_roi=(390, 68, 50, 82),
+            fallback_roi=(22, 79, 412, 42),
+            fixed_left_endpoint=(26, 99),
+            fallback_right_endpoint=(432, 93),
+            thresholds=((5, 90, -55, -12, -15, 40),),
+            min_width_px=8,
+            max_width_px=68,
+            min_height_px=6,
+            max_height_px=36,
+            min_pixels=34,
+            expected_right_x=422,
+            max_right_x_distance_px=9,
+            fixed_right_x=432,
+            min_axis_length_px=405,
+            max_axis_length_px=465,
+            endpoint_from_blob_right_edge=True,
+            smoothing_alpha=1.0,
+        )
+
+        state = detector.update(image, 0)
+
+        self.assertTrue(state["measured"])
+        self.assertEqual(state["raw_blob_count"], 2)
+        self.assertEqual(state["axis_end"], (432.0, 93.0))
+        self.assertEqual(state["width"], 24.0)
+        self.assertEqual(len(state["ball_quad"]), 4)
+
     def test_right_tape_rejects_impossible_y_jump_before_smoothing(self):
         first = FakeTapeBlob(390, 108, 22, 20, 310)
         shadow = FakeTapeBlob(390, 132, 22, 20, 310)
@@ -486,6 +555,37 @@ class PipePoseTests(unittest.TestCase):
         self.assertFalse(jumped_state["measured"])
         self.assertEqual(jumped_state["axis_end"], (397.0, 108.0))
         self.assertEqual(jumped_state["age_frames"], 1)
+
+    def test_stale_right_tape_can_relock_after_large_real_motion(self):
+        first = FakeTapeBlob(390, 108, 22, 20, 310)
+        moved = FakeTapeBlob(390, 132, 22, 20, 310)
+        image = FakeImage([[first], [], [], [moved]])
+        detector = TapeEndpointPipePoseDetector(
+            480,
+            360,
+            right_search_roi=(368, 52, 42, 94),
+            fallback_roi=(20, 70, 390, 70),
+            fixed_left_endpoint=(26, 99),
+            fallback_right_endpoint=(397, 108),
+            thresholds=((5, 90, -55, -12, -15, 40),),
+            detect_interval_frames=1,
+            fixed_right_x=397,
+            max_right_y_step_px=9,
+            min_axis_length_px=322,
+            max_axis_length_px=402,
+            smoothing_alpha=1.0,
+            max_stale_frames=1,
+        )
+
+        detector.update(image, 0)
+        detector.update(image, 1)
+        stale_state = detector.update(image, 2)
+        relocked_state = detector.update(image, 3)
+
+        self.assertFalse(stale_state["valid"])
+        self.assertTrue(relocked_state["measured"])
+        self.assertTrue(relocked_state["valid"])
+        self.assertEqual(relocked_state["axis_end"], (397.0, 132.0))
 
 
 if __name__ == "__main__":

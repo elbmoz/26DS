@@ -153,6 +153,88 @@ def roi_from_axis(
     )
 
 
+def quadrilateral_from_axis(
+    axis_start,
+    axis_end,
+    frame_width,
+    frame_height,
+    along_margin_px,
+    lateral_margin_px,
+    start_along_margin_px=None,
+    end_along_margin_px=None,
+):
+    """Return the four corners of the effective rotated pipe strip.
+
+    The native blob finder still scans the strip's bounding rectangle.
+    Candidate projection onto the pipe axis provides the rotated-region gate
+    without allocating, masking, or warping another image.
+    """
+    start_x, start_y = axis_start
+    end_x, end_y = axis_end
+    vector_x = float(end_x - start_x)
+    vector_y = float(end_y - start_y)
+    length = math.hypot(vector_x, vector_y)
+    if length <= 0.0:
+        raise ValueError("axis start and end must be different")
+    unit_x = vector_x / length
+    unit_y = vector_y / length
+    normal_x = -unit_y
+    normal_y = unit_x
+    along = max(0.0, float(along_margin_px))
+    start_along = (
+        along
+        if start_along_margin_px is None
+        else max(0.0, float(start_along_margin_px))
+    )
+    end_along = (
+        along
+        if end_along_margin_px is None
+        else max(0.0, float(end_along_margin_px))
+    )
+    lateral = max(1.0, float(lateral_margin_px))
+    padded_start = (
+        start_x - start_along * unit_x,
+        start_y - start_along * unit_y,
+    )
+    padded_end = (
+        end_x + end_along * unit_x,
+        end_y + end_along * unit_y,
+    )
+
+    def bounded(point):
+        return (
+            clamp(float(point[0]), 0.0, float(frame_width - 1)),
+            clamp(float(point[1]), 0.0, float(frame_height - 1)),
+        )
+
+    return (
+        bounded(
+            (
+                padded_start[0] + lateral * normal_x,
+                padded_start[1] + lateral * normal_y,
+            )
+        ),
+        bounded(
+            (
+                padded_end[0] + lateral * normal_x,
+                padded_end[1] + lateral * normal_y,
+            )
+        ),
+        bounded(
+            (
+                padded_end[0] - lateral * normal_x,
+                padded_end[1] - lateral * normal_y,
+            )
+        ),
+        bounded(
+            (
+                padded_start[0] - lateral * normal_x,
+                padded_start[1] - lateral * normal_y,
+            )
+        ),
+    )
+
+
 class GreenPipePoseDetector:
     """Track the elongated green pipe with native LAB blob extraction."""
 
@@ -574,6 +656,16 @@ class TapeEndpointPipePoseDetector:
         """Publish the tape-defined control axis and asymmetric ball ROI."""
         self.axis_start = self.fixed_left_endpoint
         self.axis_end = self.physical_right_endpoint
+        self.ball_quad = quadrilateral_from_axis(
+            self.axis_start,
+            self.axis_end,
+            self.frame_width,
+            self.frame_height,
+            self.roi_along_margin_px,
+            self.roi_lateral_margin_px,
+            start_along_margin_px=self.roi_start_margin_px,
+            end_along_margin_px=self.roi_along_margin_px,
+        )
         self.ball_roi = roi_from_axis(
             self.axis_start,
             self.axis_end,
@@ -631,6 +723,7 @@ class TapeEndpointPipePoseDetector:
         )
         if (
             self.has_measurement
+            and self.age_frames <= self.max_stale_frames
             and self.max_right_y_step_px > 0.0
             and abs(center_y - self.physical_right_endpoint[1])
             > self.max_right_y_step_px
@@ -715,6 +808,7 @@ class TapeEndpointPipePoseDetector:
             "axis_start": self.axis_start,
             "axis_end": self.axis_end,
             "ball_roi": self.ball_roi,
+            "ball_quad": self.ball_quad,
             "measured": measured,
             "valid": bool(
                 self.has_measurement

@@ -81,6 +81,9 @@ def build_detector():
         merge_margin=cfg.BLOB_MERGE_MARGIN,
         blob_x_stride=cfg.BLOB_X_STRIDE,
         blob_y_stride=cfg.BLOB_Y_STRIDE,
+        broad_blob_x_stride=cfg.BLOB_BROAD_X_STRIDE,
+        broad_blob_y_stride=cfg.BLOB_BROAD_Y_STRIDE,
+        broad_lateral_margin_px=cfg.BLOB_BROAD_LATERAL_MARGIN_PX,
         circle_enabled=cfg.CIRCLE_RECOVERY_ENABLED,
         circle_threshold=cfg.CIRCLE_THRESHOLD,
         circle_min_radius=cfg.CIRCLE_MIN_RADIUS,
@@ -258,6 +261,7 @@ def process_frame(img, now_ms, frame_id, detector, tracker, pipe_detector):
             "axis_start": tuple(cfg.AXIS_START),
             "axis_end": tuple(cfg.AXIS_END),
             "ball_roi": tuple(cfg.ROI),
+            "ball_quad": None,
             "measured": False,
             "valid": False,
             "age_frames": 0,
@@ -272,11 +276,13 @@ def process_frame(img, now_ms, frame_id, detector, tracker, pipe_detector):
     tracker.set_axis(pipe_state["axis_start"], pipe_state["axis_end"])
     detector.set_full_roi(pipe_state["ball_roi"])
     detector.set_axis(pipe_state["axis_start"], pipe_state["axis_end"])
-    # After coasting expires, the remembered point is useful only as history.
-    # Searching locally around it can hide a fast ball at the opposite end.
+    # A first broad hit is already enough to schedule the next frame's
+    # precise local pass. This confirms acquisition cheaply without scanning
+    # the complete widened pipe strip twice. After any miss ``hits`` resets,
+    # so stale history immediately returns to broad acquisition.
     predicted = (
         tracker.predicted_point(now_ms)
-        if tracker.confirmed
+        if tracker.position_px is not None and tracker.hits > 0
         else None
     )
     predicted_x = None if predicted is None else predicted[0]
@@ -289,6 +295,7 @@ def process_frame(img, now_ms, frame_id, detector, tracker, pipe_detector):
     detection["full_roi"] = tuple(detector.full_roi)
     detection["axis_start"] = tuple(tracker.axis_start)
     detection["axis_end"] = tuple(tracker.axis_end)
+    detection["roi_quad"] = pipe_state.get("ball_quad")
     detection["pipe"] = pipe_state
     state = tracker.update(detection["candidates"], now_ms)
     if cfg.REQUIRE_VALID_PIPE_POSE and not pipe_state["valid"]:
@@ -324,7 +331,25 @@ def draw_overlay(img, detection, state, fps_value, measured_ratio):
         round(axis_y0 + cfg.TARGET_POSITION * (axis_y1 - axis_y0))
     )
 
-    img.draw_rect(roi_x, roi_y, roi_w, roi_h, image.COLOR_BLUE, 2)
+    roi_quad = detection.get("roi_quad")
+    if roi_quad and len(roi_quad) == 4:
+        corners = [
+            (int(round(point[0])), int(round(point[1])))
+            for point in roi_quad
+        ]
+        for index in range(4):
+            start = corners[index]
+            end = corners[(index + 1) % 4]
+            img.draw_line(
+                start[0],
+                start[1],
+                end[0],
+                end[1],
+                image.COLOR_BLUE,
+                2,
+            )
+    else:
+        img.draw_rect(roi_x, roi_y, roi_w, roi_h, image.COLOR_BLUE, 2)
     search_x, search_y, search_w, search_h = detection["search_roi"]
     if detection["search_roi"] != tuple(detection["full_roi"]):
         img.draw_rect(

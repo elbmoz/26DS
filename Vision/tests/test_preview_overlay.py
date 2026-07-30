@@ -83,6 +83,40 @@ class PreviewOverlayTests(unittest.TestCase):
         self.assertTrue(numpy.any(preview[20, :, 1] >= 200))
         self.assertFalse(numpy.any(preview[80, :, 1] >= 200))
 
+    def test_synchronized_frame_draws_effective_roi_quadrilateral(self):
+        frame = numpy.zeros((96, 128, 3), dtype=numpy.uint8)
+        status = {
+            "camera_size": [128, 96],
+            "config": {"target_position": 0.5},
+        }
+        tracking = {
+            "valid": False,
+            "axis_x0": 10,
+            "axis_y0": 60,
+            "axis_x1": 118,
+            "axis_y1": 60,
+            "roi_x": 0,
+            "roi_y": 0,
+            "roi_w": 128,
+            "roi_h": 50,
+            "roi_quad": [
+                [5, 8],
+                [123, 18],
+                [118, 38],
+                [5, 28],
+            ],
+        }
+
+        preview = build_preview_frame(
+            frame,
+            tracking=tracking,
+            status=status,
+            recording=False,
+            sync_info={"matched": True},
+        )
+
+        self.assertGreaterEqual(preview[13, 64, 0], 200)
+
 
 if __name__ == "__main__":
     unittest.main()

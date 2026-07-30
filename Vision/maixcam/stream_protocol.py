@@ -290,6 +290,10 @@ def make_tracking_packet(
         "roi_y": int(full_roi[1]),
         "roi_w": int(full_roi[2]),
         "roi_h": int(full_roi[3]),
+        "roi_quad": [
+            [_rounded(point[0]), _rounded(point[1])]
+            for point in (detection.get("roi_quad") or ())
+        ],
         "pipe_measured": bool(pipe_state.get("measured", False)),
         "pipe_valid": bool(pipe_state.get("valid", False)),
         "pipe_age_frames": int(pipe_state.get("age_frames", 0)),

@@ -93,6 +93,12 @@ class StreamProtocolTests(unittest.TestCase):
             "fell_back": False,
             "axis_start": (102.5, 150.25),
             "axis_end": (521.5, 178.0),
+            "roi_quad": (
+                (80.0, 125.0),
+                (550.0, 140.0),
+                (550.0, 210.0),
+                (80.0, 210.0),
+            ),
             "pipe": {
                 "measured": True,
                 "valid": True,
@@ -123,6 +129,7 @@ class StreamProtocolTests(unittest.TestCase):
         self.assertEqual(decoded["axis_x0"], 102.5)
         self.assertTrue(decoded["pipe_valid"])
         self.assertEqual(decoded["roi_w"], 470)
+        self.assertEqual(len(decoded["roi_quad"]), 4)
 
     def test_parameter_validation_rejects_unknown_and_out_of_range(self):
         clean, errors = validate_parameters(

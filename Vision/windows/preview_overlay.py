@@ -33,6 +33,7 @@ def _draw_scene_overlay(frame, tracking, status, synchronized):
         camera_size = tuple(status["camera_size"])
 
     roi = None
+    roi_quad = None
     axis_source_start = None
     axis_source_end = None
     if tracking and synchronized:
@@ -53,12 +54,31 @@ def _draw_scene_overlay(frame, tracking, status, synchronized):
         )
         if all(value is not None for value in roi_values):
             roi = roi_values
+        candidate_quad = tracking.get("roi_quad")
+        if candidate_quad and len(candidate_quad) == 4:
+            roi_quad = candidate_quad
     elif not tracking and status:
         roi = status.get("roi")
         axis_source_start = status.get("axis_start")
         axis_source_end = status.get("axis_end")
 
-    if roi and len(roi) == 4:
+    scaled_quad = (
+        [
+            _scale_point(point, camera_size, (width, height))
+            for point in roi_quad
+        ]
+        if roi_quad
+        else None
+    )
+    if scaled_quad and all(point is not None for point in scaled_quad):
+        cv2.polylines(
+            frame,
+            [numpy.asarray(scaled_quad, dtype=numpy.int32)],
+            True,
+            (255, 120, 30),
+            1,
+        )
+    elif roi and len(roi) == 4:
         start = _scale_point(roi[:2], camera_size, (width, height))
         end = _scale_point(
             (roi[0] + roi[2], roi[1] + roi[3]),

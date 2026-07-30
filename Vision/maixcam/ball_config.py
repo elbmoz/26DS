@@ -66,11 +66,11 @@ CAMERA_GAIN = None
 # almost fixed image-space centre, so the colour blob estimates angle while
 # the mechanical centre and travel length keep the control scale stable.
 # 2026-07-30 live re-calibration after the endpoint screws were replaced by
-# black tape.  These fallback endpoints are the two tape centres in the
-# 640x480 reference image; the live right endpoint is updated below.
-ROI = _roi(30, 115, 495, 48)
+# black tape. The right endpoint now reaches the tape's physical outer edge;
+# the live vertical coordinate is updated below.
+ROI = _roi(18, 95, 560, 75)
 AXIS_START = _point(35, 132)
-AXIS_END = _point(529, 144)
+AXIS_END = _point(576, 124)
 TARGET_POSITION = 0.50
 
 # The camera, pivot and pipe travel are mechanically fixed.  Detect only a
@@ -80,40 +80,40 @@ PIPE_POSE_ENABLED = True
 REQUIRE_VALID_PIPE_POSE = True
 PIPE_POSE_MODE = "right_tape"
 
-# The former endpoint screws have been removed.  The left black tape marker
-# is camera-fixed and the right marker follows pipe rotation.  Black pixels
-# on the right merge into the dark motor/cable background, so detect the
-# green-to-black boundary immediately inside the right tape instead.  The
-# right marker was measured over 12,730 live frames: it moves vertically at
-# detector x=397 while only y changes.  Require the green component to reach
-# that line, then project the endpoint onto it.  This prevents an internal
-# tape shadow from shortening the pipe.
+# The former endpoint screws have been removed. The left black tape marker is
+# camera-fixed and the right marker follows pipe rotation. Black pixels on
+# the right merge into the dark background, so use the final green component
+# immediately inside the tape as the observable. The old crop ended at
+# detector x=397 and manufactured a false edge at its own boundary. A native
+# 480x360 RGB probe places the true green edge at x=422 and the tape's
+# physical outer trajectory at x=432. Scan only that outer strip, reject the
+# x=397 shadow, then project onto the fixed outer trajectory.
 PIPE_TAPE_LEFT_ENDPOINT = AXIS_START
 PIPE_TAPE_RIGHT_ENDPOINT = AXIS_END
-PIPE_TAPE_RIGHT_SEARCH_ROI = _roi(425, 95, 105, 105)
+PIPE_TAPE_RIGHT_SEARCH_ROI = _roi(500, 80, 93, 125)
 PIPE_TAPE_LAB_THRESHOLDS = (
     (5, 90, -55, -12, -15, 40),
 )
-PIPE_TAPE_DETECT_INTERVAL_FRAMES = 3
-PIPE_TAPE_MIN_WIDTH_PX = _sx(30)
-PIPE_TAPE_MAX_WIDTH_PX = _sx(150)
+PIPE_TAPE_DETECT_INTERVAL_FRAMES = 4
+PIPE_TAPE_MIN_WIDTH_PX = _sx(16)
+PIPE_TAPE_MAX_WIDTH_PX = _sx(90)
 PIPE_TAPE_MIN_HEIGHT_PX = _sy(8)
 PIPE_TAPE_MAX_HEIGHT_PX = _sy(48)
-PIPE_TAPE_MIN_PIXELS = _area(60)
-PIPE_TAPE_X_STRIDE = 4
-PIPE_TAPE_Y_STRIDE = 3
-PIPE_TAPE_EXPECTED_RIGHT_X = _sx(529)
-PIPE_TAPE_MAX_RIGHT_X_DISTANCE_PX = _sx(8)
+PIPE_TAPE_MIN_PIXELS = _area(30)
+PIPE_TAPE_X_STRIDE = 5
+PIPE_TAPE_Y_STRIDE = 4
+PIPE_TAPE_EXPECTED_RIGHT_X = _sx(563)
+PIPE_TAPE_MAX_RIGHT_X_DISTANCE_PX = _sx(27)
 # The right endpoint has one mechanical degree of freedom in this view.
-PIPE_TAPE_FIXED_RIGHT_X = _sx(529)
+PIPE_TAPE_FIXED_RIGHT_X = _sx(576)
 # Reject a one-update y jump that cannot be produced by the mechanism.  This
 # is deliberately checked before smoothing so a shadow cannot drag the pose.
-PIPE_TAPE_MAX_RIGHT_Y_STEP_PX = _sy(12)
-PIPE_TAPE_MIN_AXIS_LENGTH_PX = _sx(430)
-PIPE_TAPE_MAX_AXIS_LENGTH_PX = _sx(535)
+PIPE_TAPE_MAX_RIGHT_Y_STEP_PX = _sy(24)
+PIPE_TAPE_MIN_AXIS_LENGTH_PX = _sx(540)
+PIPE_TAPE_MAX_AXIS_LENGTH_PX = _sx(620)
 PIPE_TAPE_ENDPOINT_FROM_BLOB_RIGHT_EDGE = True
-# The endpoint crop itself ends at the tape centre, so its clipped green
-# component right edge already represents the calibrated control endpoint.
+# The green edge selects the correct component; the control endpoint is
+# projected separately onto the calibrated tape-outer trajectory above.
 PIPE_TAPE_ENDPOINT_X_OFFSET_PX = 0
 PIPE_FIXED_SEARCH_ROI = True
 PIPE_SEARCH_ROI = _roi(225, 120, 135, 42)
@@ -158,8 +158,14 @@ PIPE_AXIS_INSET_PX = 0
 # right tape.
 PIPE_ROI_ALONG_MARGIN_PX = 0
 PIPE_ROI_START_MARGIN_PX = _sx(16)
-PIPE_ROI_LATERAL_MARGIN_PX = _sy(16)
-PIPE_MAX_STALE_FRAMES = 9
+# The synchronized preview shows that the 12 px half-height clips the
+# 18--26 px ball silhouette as soon as its centre moves a few pixels away
+# from the estimated axis. A 26 px half-height matches the operator-marked
+# red region and retains the complete ball throughout pipe motion. Candidate
+# centres still pass through the much tighter axis-distance gate below, so
+# this enlarges image acquisition without enlarging the false-positive band.
+PIPE_ROI_LATERAL_MARGIN_PX = _sy(35)
+PIPE_MAX_STALE_FRAMES = 15
 # Ignored in fixed-search mode; retained for the reusable generic class.
 PIPE_BROAD_RETRY_INTERVAL_UPDATES = 2
 
@@ -175,7 +181,10 @@ BALL_LAB_THRESHOLDS = (
 LOCAL_SEARCH_WIDTH_PX = _sx(80)
 # Once locked, follow both predicted x and y.  This prevents a tilted pipe's
 # tall axis-aligned bounding box from making every local search nearly full.
-LOCAL_SEARCH_HEIGHT_PX = _sy(48)
+# Keep enough height around the predicted centre for the full ball silhouette
+# plus several pixels of model error. This remains smaller than the broad
+# pipe strip because the local window follows the ball in both dimensions.
+LOCAL_SEARCH_HEIGHT_PX = _sy(72)
 # A confirmed track can safely coast through one isolated LAB miss.  Broad
 # search on the second consecutive miss avoids full-pipe work on reflections
 # that disappear again on the next frame.
@@ -196,11 +205,20 @@ BLOB_MAX_ASPECT = 2.8
 # component, while merging joins it to the adjacent black pipe rail.
 BLOB_MERGE_BLOBS = False
 BLOB_MERGE_MARGIN = 3
-# The steel ball remains 18--26 detector pixels across.  A 3 x 3 sparse LAB
-# pass still samples it densely while reducing the full-pipe acquisition work
-# by 56% versus the former 2 x 2 scan.
+# The broad red-box region is only an acquisition safety net. Scan that full
+# strip coarsely, then switch to a precise window around even a tentative
+# first hit on the next frame. This preserves the requested vertical margin
+# without paying its full cost continuously or feeding coarse centroids into
+# the settled PID loop.
 BLOB_X_STRIDE = 3
 BLOB_Y_STRIDE = 3
+# Keep the complete red-box ROI for visualization and precise local tracking,
+# but acquisition only needs the mechanically constrained centre of the ball.
+# A 16 px half-band still intersects an 18--26 px ball even at the accepted
+# +/-9 px centre offset. The next frame expands to LOCAL_SEARCH_HEIGHT_PX.
+BLOB_BROAD_X_STRIDE = 4
+BLOB_BROAD_Y_STRIDE = 3
+BLOB_BROAD_LATERAL_MARGIN_PX = _sy(22)
 # In the rigid vehicle lighting, the accepted neutral LAB island is the dark
 # right-hand part of the mirrored ball rather than its geometric centre.
 # Four manually aligned points from stream_20260730_131248 measured a
@@ -227,11 +245,12 @@ CIRCLE_R_MARGIN = 6
 # 180--400 ms stalls and many unrelated peaks whenever the track is absent.
 # Native LAB still scans the narrow pipe ROI every frame and is the safe,
 # deterministic acquisition path.
-# The far-left ball touches tape/rail pixels and merges into an oversized LAB
-# component.  Hough acquisition is therefore restricted to this fixed
-# 36 x 45 detector-pixel endpoint crop, only 12% of the former broad search.
-# Running it on consecutive acquisition frames preserves the two-hit gate.
-CIRCLE_ACQUIRE_ENABLED = True
+# The widened pipe strip now preserves the complete endpoint ball silhouette,
+# so native LAB is the deterministic acquisition path. Running Hough on every
+# untracked frame cost 30--55 ms on the live board and repeatedly found the
+# fixed left tape reflection. Keep Hough only as a sparse recovery aid after
+# a real track has already been established.
+CIRCLE_ACQUIRE_ENABLED = False
 CIRCLE_ACQUIRE_INTERVAL_FRAMES = 1
 CIRCLE_ACQUIRE_ROI = _roi(10, 105, 48, 60)
 # At an endpoint the LAB blob may disappear.  Hough is therefore retained

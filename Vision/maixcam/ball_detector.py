@@ -67,6 +67,9 @@ class LabBallDetector:
         merge_margin=3,
         blob_x_stride=2,
         blob_y_stride=2,
+        broad_blob_x_stride=None,
+        broad_blob_y_stride=None,
+        broad_lateral_margin_px=None,
         circle_enabled=False,
         circle_threshold=2000,
         circle_min_radius=10,
@@ -121,6 +124,27 @@ class LabBallDetector:
         self.merge_margin = int(merge_margin)
         self.blob_x_stride = max(1, int(blob_x_stride))
         self.blob_y_stride = max(1, int(blob_y_stride))
+        self.broad_blob_x_stride = max(
+            1,
+            int(
+                self.blob_x_stride
+                if broad_blob_x_stride is None
+                else broad_blob_x_stride
+            ),
+        )
+        self.broad_blob_y_stride = max(
+            1,
+            int(
+                self.blob_y_stride
+                if broad_blob_y_stride is None
+                else broad_blob_y_stride
+            ),
+        )
+        self.broad_lateral_margin_px = (
+            None
+            if broad_lateral_margin_px is None
+            else max(1, int(broad_lateral_margin_px))
+        )
         self.circle_enabled = bool(circle_enabled)
         self.circle_threshold = int(circle_threshold)
         self.circle_min_radius = int(circle_min_radius)
@@ -231,6 +255,32 @@ class LabBallDetector:
         self.axis_unit = (dx / length, dy / length)
         self.axis_length = length
 
+    def _broad_search_roi(self):
+        """Return the cheap acquisition band inside the displayed pipe ROI.
+
+        The displayed ROI includes the complete ball silhouette. Acquisition
+        only needs the mechanically constrained ball centre and therefore
+        scans a thinner band around the live pipe axis. A tentative hit moves
+        the following frame to the taller precise local window.
+        """
+        margin = self.broad_lateral_margin_px
+        if margin is None:
+            return self.full_roi
+        x, y, w, h = self.full_roi
+        bottom = y + h
+        axis_y0 = self.axis_start[1]
+        axis_y1 = (
+            self.axis_start[1] + self.axis_unit[1] * self.axis_length
+        )
+        search_y = max(y, int(math.floor(min(axis_y0, axis_y1) - margin)))
+        search_bottom = min(
+            bottom,
+            int(math.ceil(max(axis_y0, axis_y1) + margin)),
+        )
+        if search_bottom <= search_y:
+            return self.full_roi
+        return (x, search_y, w, search_bottom - search_y)
+
     def _candidate_is_near_axis(self, candidate):
         limit = self.circle_trigger_max_axis_distance_px
         if limit is None:
@@ -253,12 +303,18 @@ class LabBallDetector:
         endpoint = self.circle_endpoint_position
         return position <= endpoint or position >= 1.0 - endpoint
 
-    def _find(self, img, roi):
+    def _find(self, img, roi, broad=False):
+        x_stride = (
+            self.broad_blob_x_stride if broad else self.blob_x_stride
+        )
+        y_stride = (
+            self.broad_blob_y_stride if broad else self.blob_y_stride
+        )
         return img.find_blobs(
             self.thresholds,
             roi=list(roi),
-            x_stride=self.blob_x_stride,
-            y_stride=self.blob_y_stride,
+            x_stride=x_stride,
+            y_stride=y_stride,
             area_threshold=max(4, self.min_pixels),
             pixels_threshold=self.min_pixels,
             merge=self.merge_blobs,
@@ -498,7 +554,7 @@ class LabBallDetector:
             self._untracked_frame_count += 1
             self._tracked_frame_count = 0
             self._local_miss_count = 0
-            search_roi = self.full_roi
+            search_roi = self._broad_search_roi()
             local_roi = None
             used_local = False
             direct_broad_retry = False
@@ -524,11 +580,13 @@ class LabBallDetector:
                 )
             )
             search_roi = (
-                self.full_roi if direct_broad_retry else local_roi
+                self._broad_search_roi()
+                if direct_broad_retry
+                else local_roi
             )
-            used_local = search_roi != self.full_roi
+            used_local = not direct_broad_retry
 
-        raw_blobs = self._find(img, search_roi)
+        raw_blobs = self._find(img, search_roi, broad=not used_local)
         candidates, accepted = self._convert(raw_blobs)
         raw_count = len(raw_blobs)
         fell_back = bool(direct_broad_retry)

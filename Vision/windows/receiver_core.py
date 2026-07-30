@@ -75,6 +75,7 @@ TRACKING_FIELDS = (
     "roi_y",
     "roi_w",
     "roi_h",
+    "roi_quad",
     "pipe_measured",
     "pipe_valid",
     "pipe_age_frames",
