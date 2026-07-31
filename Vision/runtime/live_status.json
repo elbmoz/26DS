@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "state": "failed",
+  "session_directory": "D:\\zwork\\26DianSai\\code\\ds-1\\Vision\\captures\\stream_sessions\\stream_20260731_225121",
+  "api_url": "http://127.0.0.1:8765",
+  "status_file": "D:\\zwork\\26DianSai\\code\\ds-1\\Vision\\runtime\\live_status.json",
+  "updated_epoch_ns": 1785509482383989300,
+  "device_ip": "10.16.6.1",
+  "rtsp_url": "rtsp://10.16.6.1:8554/live",
+  "video": null,
+  "analysis_report": "D:\\zwork\\26DianSai\\code\\ds-1\\Vision\\captures\\stream_sessions\\stream_20260731_225121\\analysis.txt",
+  "last_command": null
+}
