@@ -13,11 +13,13 @@ from stream_protocol import (
     decode_packet,
     encode_packet,
     make_set_config_request,
+    make_pid_request,
     make_stm32_feedback_packet,
     make_subscribe_request,
     make_tracking_packet,
     parse_subscribe_request,
     parse_set_config_request,
+    parse_pid_request,
     validate_parameters,
 )
 
@@ -237,6 +239,25 @@ class StreamProtocolTests(unittest.TestCase):
         self.assertIn("target_position", errors)
         self.assertIn("coast_frames", errors)
         self.assertIn("unknown", errors)
+
+    def test_pid_request_validates_action_parameters_and_token(self):
+        request = make_pid_request(
+            "p1",
+            "secret",
+            "set",
+            {"inner_kp": 4.0, "speed_limit": 30},
+        )
+        request_id, action, params = parse_pid_request(
+            encode_packet(request), "secret"
+        )
+        self.assertEqual((request_id, action), ("p1", "set"))
+        self.assertEqual(params["inner_kp"], 4.0)
+
+        with self.assertRaises(ProtocolError):
+            parse_pid_request(encode_packet(request), "wrong")
+        request["params"] = {"motor_direction": -1}
+        with self.assertRaises(ProtocolError):
+            parse_pid_request(encode_packet(request), "secret")
 
     def test_ai_model_and_threshold_validation(self):
         model = "/root/models/maixhub/312328/model_312328.mud"

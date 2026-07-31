@@ -57,6 +57,7 @@ typedef struct
 
     /* 管道角度内环：角度误差转换成 RS485 电机速度命令。 */
     float angle_kp_speed_per_deg;    /* 每 1°角度误差产生的速度命令。 */
+    float angle_kd_speed_per_deg_s;  /* 管道角速度阻尼，单位 speed/(deg/s)。 */
     float motor_speed_limit;         /* 速度命令绝对值上限。 */
     float motor_speed_deadband;      /* 速度命令绝对值不超过该值时停车。 */
     float motor_min_speed;           /* 非零速度命令的最小绝对值。 */
@@ -103,6 +104,7 @@ typedef struct
     volatile int32_t motor_position;      /* 0x36 返回的电机原始位置。 */
     volatile float motor_angle_deg;       /* 底层换算后的电机角度。 */
     volatile float rod_angle_deg;         /* 拟合得到的实际管道 X 角。 */
+    volatile float rod_rate_deg_s;        /* 由位置反馈差分得到的管道角速度。 */
     volatile float angle_error_deg;       /* 目标管道角-实际管道角。 */
     volatile float desired_motor_speed;   /* 已限幅、尚未量化的连续速度目标。 */
     volatile int32_t motor_command;       /* 最终发送的有符号电机速度命令。 */
@@ -112,6 +114,7 @@ typedef struct
     volatile uint32_t outer_update_count; /* 实际处理的新视觉帧计数。 */
     volatile uint32_t motor_position_update_count; /* 已使用的位置回包计数。 */
     volatile HAL_StatusTypeDef last_motor_status; /* 最近一次电机控制命令的 HAL 状态。 */
+    volatile uint8_t protection_state; /* 0正常，1位置超时，2标定无效，3角度越界。 */
 } BalanceControlState;
 
 extern BalanceControlConfig balance_control_config;

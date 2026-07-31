@@ -44,7 +44,7 @@ Preprocessor defines: `USE_HAL_DRIVER;STM32F407xx`
    slowdown and IMU unwrapped-yaw one-lap stopping.
 9. `BalanceControl.c/.h` — Question 2 cascaded controller for USART1 motor
    address `0x03`. A dt-aware outer PID converts MaixCAM ball position and
-   filtered velocity into a target rod angle; an inner proportional loop uses
+   filtered velocity into a target rod angle; an inner PD loop uses
    motor-position feedback to produce a bounded, slew-limited speed command.
    The signed motor-to-rod fit is `-0.36450137 rod deg / motor deg`, derived
    from the robust `a010e37` dataset; the horizontal motor angle is still
@@ -59,6 +59,10 @@ Preprocessor defines: `USE_HAL_DRIVER;STM32F407xx`
    angle through brief dropouts for at most 120 ms before stopping.
    The current phase regulates to center (`target=0`); the later
    `+5 cm -> -5 cm` sequence has reserved pixel targets and a target setter.
+   `BalanceTuning.c/.h` adds USART6 RAM-only PID parameters, fixed inner/outer
+   step tests and F2 telemetry. STM32 applies parameters only at a 20 ms
+   control boundary and acknowledges them after application; it never writes
+   tuning values to Flash.
 10. `Task4PositionControl.c/.h` — Isolated Question 4 controller. It copies the
     Question 2 ball-position outer loop but removes the software motor-speed
     inner loop. The reviewed `-0.0020022658 rod deg / position count` mapping
@@ -222,4 +226,5 @@ the peripheral and pin source of truth. Keep `AGENTS.md` and `CLAUDE.md` in sync
 
 See `DS_PORTING.md` for the migration record and hardware checks required before
 on-car testing. See `LINE_FOLLOW_TUNING.md` for the Question 1 algorithm and
-tuning sequence, and `BALANCE_CONTROL_TUNING.md` for Question 2.
+tuning sequence, `BALANCE_CONTROL_TUNING.md` for Question 2, and
+`PID_AUTO_TUNING.md` for the RAM-only automatic tuning workflow.

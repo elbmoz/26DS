@@ -21,6 +21,46 @@ STM32_FEEDBACK_RAW_FIELDS = (
     "motor_status",
 )
 
+STM32_FEEDBACK_V2_RAW_FIELDS = (
+    "seq",
+    "mcu_ms",
+    "vision_frame",
+    "vision_age_ms",
+    "position_x10",
+    "velocity_x10",
+    "error_x10",
+    "p_x100",
+    "i_x100",
+    "d_x100",
+    "target_angle_x100",
+    "actual_angle_x100",
+    "rod_rate_x100",
+    "angle_error_x100",
+    "desired_speed_x100",
+    "motor_command",
+    "position_age_ms",
+    "position_valid",
+    "protection_state",
+    "motor_status",
+    "tuning_mode",
+)
+
+PID_PARAMETER_ORDER = (
+    "outer_kp",
+    "outer_kd",
+    "angle_limit",
+    "inner_kp",
+    "inner_kd",
+    "speed_limit",
+    "slew",
+    "deadband",
+    "min_speed",
+)
+
+PID_PARAMETER_MASKS = {
+    name: 1 << index for index, name in enumerate(PID_PARAMETER_ORDER)
+}
+
 STM32_FEEDBACK_CSV_FIELDS = (
     "device_ms",
     "seq",
@@ -43,6 +83,16 @@ STM32_FEEDBACK_CSV_FIELDS = (
     "motor_command",
     "motor_status",
     "motor_status_name",
+    "feedback_version",
+    "target_rod_angle_deg",
+    "actual_rod_angle_deg",
+    "rod_rate_deg_s",
+    "angle_error_deg",
+    "desired_motor_speed",
+    "position_age_ms",
+    "position_valid",
+    "protection_state",
+    "tuning_mode",
     "raw_line",
 )
 
@@ -88,16 +138,22 @@ def _decode_ascii(data):
 
 
 def parse_stm32_feedback_line(line):
-    """Parse one ``F,...`` line and preserve raw and scaled values."""
+    """Parse one legacy ``F`` or complete ``F2`` controller frame."""
     text = _decode_ascii(line).strip()
     fields = text.split(",")
-    if len(fields) != len(STM32_FEEDBACK_RAW_FIELDS) + 1:
-        raise ValueError("STM32 feedback field count must be 13")
-    if fields[0] != "F":
-        raise ValueError("STM32 feedback must start with F")
+    if fields[0] == "F":
+        raw_fields = STM32_FEEDBACK_RAW_FIELDS
+        version = 1
+    elif fields[0] == "F2":
+        raw_fields = STM32_FEEDBACK_V2_RAW_FIELDS
+        version = 2
+    else:
+        raise ValueError("STM32 feedback must start with F or F2")
+    if len(fields) != len(raw_fields) + 1:
+        raise ValueError("invalid STM32 feedback field count")
 
     feedback = {}
-    for name, value in zip(STM32_FEEDBACK_RAW_FIELDS, fields[1:]):
+    for name, value in zip(raw_fields, fields[1:]):
         feedback[name] = int(value)
 
     motor_status = feedback["motor_status"]
@@ -113,10 +169,57 @@ def parse_stm32_feedback_line(line):
             "i_term": feedback["i_x100"] / 100.0,
             "d_term": feedback["d_x100"] / 100.0,
             "motor_status_name": MOTOR_STATUS_NAMES[motor_status],
+            "feedback_version": version,
             "raw_line": text,
         }
     )
+    if version == 2:
+        feedback.update(
+            {
+                "target_rod_angle_deg": (
+                    feedback["target_angle_x100"] / 100.0
+                ),
+                "actual_rod_angle_deg": (
+                    feedback["actual_angle_x100"] / 100.0
+                ),
+                "rod_rate_deg_s": feedback["rod_rate_x100"] / 100.0,
+                "angle_error_deg": feedback["angle_error_x100"] / 100.0,
+                "desired_motor_speed": (
+                    feedback["desired_speed_x100"] / 100.0
+                ),
+            }
+        )
     return feedback
+
+
+def parse_pid_ack_line(line):
+    """Parse the STM32 ACK emitted only after a RAM update is applied."""
+    text = _decode_ascii(line).strip()
+    fields = text.split(",")
+    if len(fields) != 15 or fields[0] != "PA":
+        raise ValueError("PID ACK must contain 15 fields and start with PA")
+    values = [_parse_decimal_integer(value) for value in fields[1:]]
+    config = {
+        "outer_kp": values[2] / 1000000.0,
+        "outer_kd": values[3] / 1000000.0,
+        "angle_limit": values[4] / 1000.0,
+        "inner_kp": values[5] / 1000.0,
+        "inner_kd": values[6] / 1000.0,
+        "speed_limit": values[7] / 100.0,
+        "slew": values[8] / 100.0,
+        "deadband": values[9] / 100.0,
+        "min_speed": values[10] / 100.0,
+    }
+    return {
+        "seq": values[0] & _UINT32_MASK,
+        "status": values[1],
+        "ok": values[1] == 0,
+        "config": config,
+        "mode": values[11],
+        "test_target": values[12] / 100.0,
+        "remaining_ms": values[13],
+        "raw_line": text,
+    }
 
 
 def _parse_decimal_integer(value):
@@ -263,6 +366,7 @@ class Stm32Link:
         # Kept as a compatibility alias for older diagnostics.
         self.feedback_tail = ""
         self.feedback_queue = []
+        self.pid_ack_queue = []
         self.feedback_queue_size = max(1, int(feedback_queue_size))
         self.last_feedback_seq = None
         self.latest_q9 = None
@@ -279,6 +383,10 @@ class Stm32Link:
         self.q9_frame_count = 0
         self.q9_parse_error_count = 0
         self.q9_sequence_gap_count = 0
+        self.pid_request_sequence = 0
+        self.pid_ack_count = 0
+        self.pid_ack_error_count = 0
+        self.pid_config = None
 
     def _consume_commands(self, text):
         for character in text.lower():
@@ -331,9 +439,12 @@ class Stm32Link:
 
     def _count_bad_line(self, line):
         q9_marker = line.rfind("Q9")
-        feedback_marker = line.rfind("F,")
+        feedback_marker = max(line.rfind("F,"), line.rfind("F2,"))
+        pid_ack_marker = line.rfind("PA,")
         if q9_marker >= feedback_marker and q9_marker >= 0:
             self.q9_parse_error_count += 1
+        elif pid_ack_marker >= 0:
+            self.pid_ack_error_count += 1
         elif feedback_marker >= 0:
             self.feedback_error_count += 1
 
@@ -346,7 +457,18 @@ class Stm32Link:
             return
 
         q9_marker = text.rfind("Q9")
-        feedback_marker = text.rfind("F,")
+        feedback_marker = max(text.rfind("F,"), text.rfind("F2,"))
+        pid_ack_marker = text.rfind("PA,")
+        if pid_ack_marker >= 0:
+            try:
+                ack = parse_pid_ack_line(text[pid_ack_marker:])
+            except (TypeError, ValueError):
+                self.pid_ack_error_count += 1
+                return
+            self.pid_config = dict(ack["config"])
+            self.pid_ack_queue.append(ack)
+            self.pid_ack_count += 1
+            return
         if q9_marker >= feedback_marker and q9_marker >= 0:
             try:
                 frame = parse_q9_line(text[q9_marker:])
@@ -458,6 +580,62 @@ class Stm32Link:
         items = self.feedback_queue[:count]
         del self.feedback_queue[:count]
         return items
+
+    def drain_pid_acks(self):
+        items = self.pid_ack_queue[:]
+        del self.pid_ack_queue[:]
+        return items
+
+    def send_pid_request(self, action, params=None):
+        """Forward one Windows PID operation to STM32 and return MCU seq."""
+        if self.serial_port is None or not self.streaming:
+            raise RuntimeError("STM32 Question 2 stream is not active")
+        params = dict(params or {})
+        self.pid_request_sequence = (
+            self.pid_request_sequence + 1
+        ) & _UINT32_MASK
+        sequence = self.pid_request_sequence
+        if action == "get":
+            line = "PG,{}\n".format(sequence)
+        elif action == "reset":
+            line = "PR,{}\n".format(sequence)
+        elif action == "stop":
+            line = "PX,{}\n".format(sequence)
+        elif action == "test":
+            mode = str(params.get("mode", "")).lower()
+            mode_code = {"inner": "I", "outer": "O"}.get(mode)
+            if mode_code is None:
+                raise ValueError("PID test mode must be inner or outer")
+            target = float(params["target"])
+            duration_ms = int(params["duration_ms"])
+            line = "PT,{},{},{:.9g},{}\n".format(
+                sequence, mode_code, target, duration_ms
+            )
+        elif action == "set":
+            unknown = set(params) - set(PID_PARAMETER_ORDER)
+            if unknown or not params:
+                raise ValueError(
+                    "unknown or empty PID parameters: {}".format(
+                        sorted(unknown)
+                    )
+                )
+            mask = 0
+            values = []
+            for name in PID_PARAMETER_ORDER:
+                if name in params:
+                    mask |= PID_PARAMETER_MASKS[name]
+                    values.append("{:.9g}".format(float(params[name])))
+            line = "PS,{},{},{}\n".format(
+                sequence, mask, ",".join(values)
+            )
+        else:
+            raise ValueError("unknown PID action {}".format(action))
+
+        written = self.serial_port.write_str(line)
+        if written is not None and written < len(line):
+            self.tx_error_count += 1
+            raise RuntimeError("short STM32 PID UART write")
+        return sequence
 
     def send_state(self, state):
         """Send one frame when Question 2 streaming has been enabled."""

@@ -24,6 +24,7 @@ from stream_protocol import (  # noqa: E402
     decode_packet,
     encode_packet,
     make_set_config_request,
+    make_pid_request,
     make_subscribe_request,
 )
 
@@ -117,6 +118,16 @@ STM32_FEEDBACK_FIELDS = (
     "motor_command",
     "motor_status",
     "motor_status_name",
+    "feedback_version",
+    "target_rod_angle_deg",
+    "actual_rod_angle_deg",
+    "rod_rate_deg_s",
+    "angle_error_deg",
+    "desired_motor_speed",
+    "position_age_ms",
+    "position_valid",
+    "protection_state",
+    "tuning_mode",
     "raw_line",
 )
 
@@ -472,7 +483,11 @@ class TelemetryReceiver:
                     feedback_listeners = tuple(
                         self._feedback_listeners
                     )
-                elif packet_type in ("config_ack", "subscribe_ack"):
+                elif packet_type in (
+                    "config_ack",
+                    "subscribe_ack",
+                    "pid_ack",
+                ):
                     self.latest_ack = packet
                     request_id = packet.get("request_id")
                     if request_id:
@@ -622,6 +637,26 @@ class TelemetryReceiver:
                 "request_id": request_id,
                 "device_ip": self.device_ip,
                 "params": params,
+            },
+        )
+        return request_id
+
+    def send_pid_request(self, token, action, params=None):
+        if not self.device_ip or not self.control_port:
+            raise RuntimeError("device status not discovered yet")
+        request_id = "pid-{}".format(time.time_ns())
+        packet = make_pid_request(request_id, token, action, params)
+        self.socket.sendto(
+            encode_packet(packet),
+            (self.device_ip, self.control_port),
+        )
+        self.logger.log_event(
+            "pid_request",
+            {
+                "request_id": request_id,
+                "device_ip": self.device_ip,
+                "action": action,
+                "params": dict(params or {}),
             },
         )
         return request_id

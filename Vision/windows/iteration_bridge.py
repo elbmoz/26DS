@@ -136,6 +136,11 @@ class _BridgeHandler(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         command_types = {
             "/config": "set_config",
+            "/pid": "pid_get",
+            "/pid/set": "pid_set",
+            "/pid/reset": "pid_reset",
+            "/pid/test": "pid_test",
+            "/pid/stop": "pid_stop",
             "/mark": "mark",
             "/snapshot": "snapshot",
             "/stop": "stop",

@@ -1,6 +1,7 @@
 #include "BalanceControl.h"
 
 #include "BallVision.h"
+#include "BalanceTuning.h"
 #include "DS.h"
 #include "MotorPositionMonitor.h"
 
@@ -99,6 +100,7 @@ BalanceControlConfig balance_control_config = {
      * - motor_speed_deadband：目标附近的停车死区。
      */
     .angle_kp_speed_per_deg = 24.0f,     /* 角度误差每 1°产生的速度命令。 */
+    .angle_kd_speed_per_deg_s = 0.0f,   /* 在线阶跃测试辨识角速度阻尼。 */
     .motor_speed_limit = 10.0f,         /* 最终速度命令绝对值不得超过 30。 */
     .motor_speed_deadband = 0.3f,       /* 连续速度落入该死区时命令为 0。 */
     .motor_min_speed = 0.5f,            /* 最小非零命令 1；缩放成功时为 0.1 RPM。 */
@@ -139,6 +141,9 @@ static uint8_t balance_control_had_valid_vision;
 static uint8_t balance_control_fine_level_hold;
 static float balance_control_slew_output;
 static int32_t balance_control_last_sent_command;
+static float balance_control_last_rod_angle_deg;
+static uint32_t balance_control_last_rod_update_ms;
+static uint32_t balance_control_last_rate_position_count;
 
 static float BalanceControl_AbsFloat(float value)
 {
@@ -198,15 +203,20 @@ static void BalanceControl_ResetOuter(void)
 static void BalanceControl_ResetInner(void)
 {
     balance_control_state.motor_position_valid = 0U;
+    balance_control_state.protection_state = 1U;
     balance_control_state.leveling = 1U;
     balance_control_state.motor_position = 0;
     balance_control_state.motor_angle_deg = 0.0f;
     balance_control_state.rod_angle_deg = 0.0f;
+    balance_control_state.rod_rate_deg_s = 0.0f;
     balance_control_state.angle_error_deg = 0.0f;
     balance_control_state.desired_motor_speed = 0.0f;
     balance_control_state.motor_command = 0;
     balance_control_slew_output = 0.0f;
     balance_control_last_sent_command = 0;
+    balance_control_last_rod_angle_deg = 0.0f;
+    balance_control_last_rod_update_ms = 0U;
+    balance_control_last_rate_position_count = 0U;
 }
 
 static void BalanceControl_SendMotorFeedback(uint32_t vision_frame,
@@ -217,6 +227,37 @@ static void BalanceControl_SendMotorFeedback(uint32_t vision_frame,
                                              HAL_StatusTypeDef motor_status)
 {
     uint32_t now = HAL_GetTick();
+
+    if (BalanceTuning_FeedbackV2Enabled() != 0U) {
+        BallVisionFeedbackV2 feedback;
+
+        feedback.vision_frame = vision_frame;
+        feedback.vision_age_ms = (uint32_t)(now - vision_last_rx_ms);
+        feedback.position = ball_position;
+        feedback.velocity = ball_velocity;
+        feedback.control_error = balance_control_state.position_error;
+        feedback.p_term = balance_control_state.position_p_term;
+        feedback.i_term = balance_control_state.position_i_term;
+        feedback.d_term = balance_control_state.velocity_d_term;
+        feedback.target_rod_angle =
+            balance_control_state.target_rod_angle_deg;
+        feedback.actual_rod_angle = balance_control_state.rod_angle_deg;
+        feedback.rod_rate = balance_control_state.rod_rate_deg_s;
+        feedback.angle_error = balance_control_state.angle_error_deg;
+        feedback.desired_speed = balance_control_state.desired_motor_speed;
+        feedback.motor_command = motor_command;
+        feedback.position_age_ms =
+            (motor_position_monitor_state.update_count == 0U) ?
+            0xFFFFFFFFUL :
+            (uint32_t)(now - motor_position_monitor_state.last_update_ms);
+        feedback.position_valid =
+            balance_control_state.motor_position_valid;
+        feedback.protection_state = balance_control_state.protection_state;
+        feedback.motor_status = motor_status;
+        feedback.tuning_mode = BalanceTuning_GetMode();
+        (void)BallVision_SendFeedbackV2(&feedback);
+        return;
+    }
 
     (void)BallVision_SendFeedback(
         vision_frame,
@@ -511,6 +552,7 @@ static void BalanceControl_UpdateInner(uint32_t vision_frame,
             ball_position,
             ball_velocity);
         balance_control_state.last_motor_status = HAL_ERROR;
+        balance_control_state.protection_state = 2U;
         return;
     }
 
@@ -534,6 +576,44 @@ static void BalanceControl_UpdateInner(uint32_t vision_frame,
         (balance_control_state.motor_angle_deg -
          balance_control_config.motor_zero_angle_deg) * rod_scale;
 
+    if (balance_control_last_rate_position_count !=
+            balance_control_state.motor_position_update_count) {
+        uint32_t rate_now = motor_position_monitor_state.last_update_ms;
+        if (balance_control_last_rod_update_ms != 0U &&
+            rate_now != balance_control_last_rod_update_ms) {
+            balance_control_state.rod_rate_deg_s =
+                (balance_control_state.rod_angle_deg -
+                 balance_control_last_rod_angle_deg) * 1000.0f /
+                (float)(uint32_t)(rate_now -
+                                  balance_control_last_rod_update_ms);
+        }
+        balance_control_last_rod_angle_deg =
+            balance_control_state.rod_angle_deg;
+        balance_control_last_rod_update_ms = rate_now;
+        balance_control_last_rate_position_count =
+            balance_control_state.motor_position_update_count;
+    }
+
+    balance_control_state.protection_state = 0U;
+
+    if (BalanceTuning_ForceStop() != 0U) {
+        if (balance_control_last_sent_command != 0) {
+            motor_status = BalanceControl_StopMotorSafely();
+        }
+        balance_control_state.target_rod_angle_deg =
+            balance_control_state.rod_angle_deg;
+        balance_control_state.angle_error_deg = 0.0f;
+        balance_control_state.desired_motor_speed = 0.0f;
+        balance_control_state.motor_command = 0;
+        balance_control_slew_output = 0.0f;
+        balance_control_last_sent_command = 0;
+        balance_control_state.last_motor_status = motor_status;
+        BalanceControl_SendMotorFeedback(
+            vision_frame, vision_last_rx_ms, ball_position, ball_velocity,
+            0, motor_status);
+        return;
+    }
+
     target_angle = balance_control_state.target_rod_angle_deg;
     rod_limit = BalanceControl_AbsFloat(
         balance_control_config.rod_angle_limit_deg);
@@ -544,6 +624,7 @@ static void BalanceControl_UpdateInner(uint32_t vision_frame,
         balance_control_state.target_rod_angle_deg = 0.0f;
         balance_control_state.leveling = 1U;
         balance_control_state.outer_integral = 0.0f;
+        balance_control_state.protection_state = 3U;
     }
 
     balance_control_state.angle_error_deg =
@@ -555,8 +636,9 @@ static void BalanceControl_UpdateInner(uint32_t vision_frame,
 
     motor_direction = BalanceControl_NonzeroDirection(
         balance_control_config.motor_direction);
-    desired_speed = angle_kp *
-                    balance_control_state.angle_error_deg *
+    desired_speed = (angle_kp * balance_control_state.angle_error_deg -
+                     balance_control_config.angle_kd_speed_per_deg_s *
+                         balance_control_state.rod_rate_deg_s) *
                     (float)motor_direction;
     speed_limit = BalanceControl_AbsFloat(
         balance_control_config.motor_speed_limit);
@@ -587,7 +669,8 @@ static void BalanceControl_UpdateInner(uint32_t vision_frame,
     }
     balance_control_state.last_motor_status = motor_status;
 
-    if (command_attempted != 0U) {
+    if (command_attempted != 0U ||
+        BalanceTuning_FeedbackV2Enabled() != 0U) {
         BalanceControl_SendMotorFeedback(
             vision_frame,
             vision_last_rx_ms,
@@ -610,17 +693,20 @@ void BalanceControl_Init(void)
     balance_control_state.outer_update_count = 0U;
     balance_control_state.motor_position_update_count = 0U;
     balance_control_state.last_motor_status = HAL_OK;
+    balance_control_state.protection_state = 0U;
     BalanceControl_ResetOuter();
     BalanceControl_ResetInner();
 
     balance_control_last_update_ms = HAL_GetTick();
     balance_control_last_vision_frame = 0xFFFFFFFFUL;
     balance_control_had_valid_vision = 0U;
+    BalanceTuning_Init();
 }
 
 void BalanceControl_Start(float target_position)
 {
     (void)DS_BalanceStop();
+    BalanceTuning_OnControllerStart();
     BalanceControl_ResetOuter();
     BalanceControl_ResetInner();
 
@@ -662,7 +748,9 @@ void BalanceControl_Update(void)
     uint32_t vision_last_rx_ms;
     float ball_position;
     float ball_velocity;
+    float tuning_target;
     uint8_t vision_valid;
+    uint8_t tuning_action;
 
     if (balance_control_state.enabled == 0U) {
         return;
@@ -672,6 +760,16 @@ void BalanceControl_Update(void)
     if ((uint32_t)(now - balance_control_last_update_ms) >=
         balance_control_config.control_period_ms) {
         balance_control_last_update_ms = now;
+        tuning_action =
+            BalanceTuning_ApplyPendingAtControlBoundary(now);
+        if ((tuning_action & BALANCE_TUNING_ACTION_STOP) != 0U) {
+            (void)BalanceControl_StopMotorSafely();
+            balance_control_slew_output = 0.0f;
+            balance_control_last_sent_command = 0;
+        }
+        if ((tuning_action & BALANCE_TUNING_ACTION_RESET) != 0U) {
+            BalanceControl_ResetOuter();
+        }
         ds = DS_GetState();
 
         primask = __get_PRIMASK();
@@ -683,6 +781,10 @@ void BalanceControl_Update(void)
         vision_valid = ds->ball_vision_valid;
         if (primask == 0U) {
             __enable_irq();
+        }
+
+        if (BalanceTuning_GetOuterTarget(&tuning_target) != 0U) {
+            balance_control_state.target_position = tuning_target;
         }
 
         if (vision_valid != 0U &&
@@ -711,10 +813,11 @@ void BalanceControl_Update(void)
             balance_control_state.target_rod_angle_deg = 0.0f;
             balance_control_state.leveling = 1U;
         }
-				
-				//balance_control_state.target_rod_angle_deg = -2.0f;
-				
-				
+        if (BalanceTuning_GetInnerTarget(&tuning_target) != 0U) {
+            balance_control_state.target_rod_angle_deg = tuning_target;
+            balance_control_state.leveling = 0U;
+        }
+
         BalanceControl_UpdateInner(vision_frame,
                                    vision_last_rx_ms,
                                    ball_position,

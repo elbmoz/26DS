@@ -40,6 +40,18 @@ TUNABLE_SPECS = {
     "circle_max_radius": ("int", 8, 32),
 }
 
+PID_TUNABLE_SPECS = {
+    "outer_kp": (0.0, 1.0),
+    "outer_kd": (0.0, 1.0),
+    "angle_limit": (0.1, 20.0),
+    "inner_kp": (0.0, 500.0),
+    "inner_kd": (0.0, 100.0),
+    "speed_limit": (1.0, 500.0),
+    "slew": (0.01, 500.0),
+    "deadband": (0.0, 500.0),
+    "min_speed": (0.0, 500.0),
+}
+
 
 class ProtocolError(ValueError):
     def __init__(self, code, message):
@@ -494,9 +506,20 @@ def make_stm32_feedback_packet(
         "motor_status",
         "motor_status_name",
         "raw_line",
+        "feedback_version",
+        "target_rod_angle_deg",
+        "actual_rod_angle_deg",
+        "rod_rate_deg_s",
+        "angle_error_deg",
+        "desired_motor_speed",
+        "position_age_ms",
+        "position_valid",
+        "protection_state",
+        "tuning_mode",
     )
     for name in fields:
-        packet[name] = feedback[name]
+        if name in feedback:
+            packet[name] = feedback[name]
     return packet
 
 
@@ -629,4 +652,110 @@ def make_config_ack(
         "applied": dict(applied),
         "errors": dict(errors),
         "config": dict(current_config),
+    }
+
+
+def make_pid_request(request_id, token, action, params=None):
+    return {
+        "v": PROTOCOL_VERSION,
+        "type": "pid_request",
+        "request_id": str(request_id),
+        "token": str(token),
+        "action": str(action),
+        "params": dict(params or {}),
+    }
+
+
+def parse_pid_request(data, expected_token):
+    packet = decode_packet(data)
+    if packet.get("type") != "pid_request":
+        raise ProtocolError("invalid_type", "expected pid_request packet")
+    request_id = packet.get("request_id")
+    if not isinstance(request_id, str) or not request_id:
+        raise ProtocolError("invalid_request_id", "request_id is required")
+    if len(request_id) > 64:
+        raise ProtocolError("invalid_request_id", "request_id is too long")
+    if packet.get("token") != expected_token:
+        raise ProtocolError("unauthorized", "control token mismatch")
+
+    action = packet.get("action")
+    if action not in ("get", "set", "reset", "test", "stop"):
+        raise ProtocolError("invalid_action", "invalid PID action")
+    params = packet.get("params", {})
+    if not isinstance(params, dict):
+        raise ProtocolError("invalid_params", "PID params must be an object")
+
+    clean = {}
+    if action == "set":
+        if not params:
+            raise ProtocolError("invalid_params", "PID set cannot be empty")
+        for name, value in params.items():
+            if name not in PID_TUNABLE_SPECS:
+                raise ProtocolError(
+                    "unknown_parameter", "unknown PID parameter {}".format(name)
+                )
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ProtocolError(
+                    "invalid_parameter", "{} must be numeric".format(name)
+                )
+            number = float(value)
+            minimum, maximum = PID_TUNABLE_SPECS[name]
+            if not math.isfinite(number) or not minimum <= number <= maximum:
+                raise ProtocolError(
+                    "out_of_range",
+                    "{} must be in [{}, {}]".format(name, minimum, maximum),
+                )
+            clean[name] = number
+    elif action == "test":
+        mode = str(params.get("mode", "")).lower()
+        if mode not in ("inner", "outer"):
+            raise ProtocolError(
+                "invalid_test", "PID test mode must be inner or outer"
+            )
+        try:
+            target = float(params["target"])
+            duration_ms = int(params["duration_ms"])
+        except (KeyError, TypeError, ValueError):
+            raise ProtocolError(
+                "invalid_test", "PID test requires target and duration_ms"
+            )
+        if not math.isfinite(target) or duration_ms < 200 or duration_ms > 15000:
+            raise ProtocolError(
+                "invalid_test", "PID test duration must be 200..15000 ms"
+            )
+        clean = {
+            "mode": mode,
+            "target": target,
+            "duration_ms": duration_ms,
+        }
+    elif params:
+        raise ProtocolError(
+            "invalid_params", "this PID action does not accept parameters"
+        )
+    return request_id, action, clean
+
+
+def make_pid_ack(
+    session_id,
+    request_id,
+    action,
+    ok,
+    config=None,
+    mode=0,
+    test_target=0.0,
+    remaining_ms=0,
+    error="",
+):
+    return {
+        "v": PROTOCOL_VERSION,
+        "type": "pid_ack",
+        "session": str(session_id),
+        "request_id": str(request_id),
+        "action": str(action),
+        "ok": bool(ok),
+        "config": dict(config or {}),
+        "mode": int(mode),
+        "test_target": float(test_target),
+        "remaining_ms": int(remaining_ms),
+        "error": str(error),
     }

@@ -12,6 +12,7 @@ from stm32_link import (
     feedback_csv_row,
     format_stm32_line,
     parse_stm32_feedback_line,
+    parse_pid_ack_line,
     parse_q9_line,
     q9_overlay_lines,
 )
@@ -130,6 +131,38 @@ class Stm32LinkTests(unittest.TestCase):
         self.assertIn("position_px", header)
         self.assertIn("F,1,20,3,4", row)
         self.assertTrue(row.startswith("99,1,0,20,3,4,"))
+
+    def test_f2_feedback_exposes_complete_cascade_state(self):
+        feedback = parse_stm32_feedback_line(
+            "F2,4,100,2,20,15,-25,35,120,0,-40,200,150,-10,"
+            "50,-250,12,5,1,0,0,1"
+        )
+        self.assertEqual(feedback["feedback_version"], 2)
+        self.assertEqual(feedback["target_rod_angle_deg"], 2.0)
+        self.assertEqual(feedback["actual_rod_angle_deg"], 1.5)
+        self.assertEqual(feedback["angle_error_deg"], 0.5)
+        self.assertEqual(feedback["desired_motor_speed"], -2.5)
+        self.assertEqual(feedback["tuning_mode"], 1)
+
+    def test_pid_requests_use_mask_and_ack_updates_snapshot(self):
+        serial = FakeSerial()
+        serial.rx_chunks.append(b"c2")
+        link = Stm32Link(serial)
+        link.poll_commands()
+
+        sequence = link.send_pid_request(
+            "set", {"inner_kp": 3.5, "speed_limit": 30}
+        )
+        self.assertEqual(sequence, 1)
+        self.assertEqual(serial.tx_lines[-1], "PS,1,40,3.5,30\n")
+
+        ack = parse_pid_ack_line(
+            "PA,1,0,26044,4600,10500,3500,100,3000,15000,"
+            "30,50,0,0,0"
+        )
+        self.assertTrue(ack["ok"])
+        self.assertEqual(ack["config"]["inner_kp"], 3.5)
+        self.assertEqual(ack["config"]["speed_limit"], 30.0)
 
     def test_q9_parser_exposes_raw_and_scaled_angles(self):
         frame = parse_q9_line(self.Q9_LINE)

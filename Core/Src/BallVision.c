@@ -1,11 +1,12 @@
 #include "BallVision.h"
 
 #include "DS.h"
+#include "BalanceTuning.h"
 
 #include <limits.h>
 
-#define BALL_VISION_LINE_LENGTH       32U
-#define BALL_VISION_FEEDBACK_LENGTH   160U
+#define BALL_VISION_LINE_LENGTH       160U
+#define BALL_VISION_FEEDBACK_LENGTH   224U
 #define BALL_VISION_STOP_TX_WAIT_MS   20U
 
 static UART_HandleTypeDef *ball_vision_huart;
@@ -174,6 +175,13 @@ static void BallVision_ProcessLine(char *line)
         return;
     }
 
+    if (line[0] == 'P') {
+        if (BalanceTuning_ProcessLineFromISR(line) == 0U) {
+            ball_vision_parse_error_count++;
+        }
+        return;
+    }
+
     if (line[0] != 'B' || line[1] != ',') {
         ball_vision_parse_error_count++;
         return;
@@ -322,6 +330,132 @@ HAL_StatusTypeDef BallVision_SendFeedback(uint32_t vision_frame,
 
     ball_vision_feedback_sent_count++;
     return HAL_OK;
+}
+
+HAL_StatusTypeDef BallVision_SendFeedbackV2(
+    const BallVisionFeedbackV2 *feedback)
+{
+    HAL_StatusTypeDef status;
+    uint16_t length = 0U;
+    uint32_t sequence;
+
+    if (feedback == NULL || ball_vision_huart == NULL ||
+        ball_vision_stream_active == 0U) {
+        return HAL_ERROR;
+    }
+    sequence = ++ball_vision_feedback_attempt_count;
+    if (ball_vision_feedback_tx_busy != 0U) {
+        ball_vision_feedback_drop_count++;
+        return HAL_BUSY;
+    }
+
+    if (BallVision_AppendChar(&length, 'F') == 0U ||
+        BallVision_AppendChar(&length, '2') == 0U ||
+        BallVision_AppendUnsignedField(&length, sequence) == 0U ||
+        BallVision_AppendUnsignedField(&length, HAL_GetTick()) == 0U ||
+        BallVision_AppendUnsignedField(&length, feedback->vision_frame) == 0U ||
+        BallVision_AppendUnsignedField(&length, feedback->vision_age_ms) == 0U ||
+        BallVision_AppendSignedField(&length,
+            BallVision_ScaleFloat(feedback->position, 10.0f)) == 0U ||
+        BallVision_AppendSignedField(&length,
+            BallVision_ScaleFloat(feedback->velocity, 10.0f)) == 0U ||
+        BallVision_AppendSignedField(&length,
+            BallVision_ScaleFloat(feedback->control_error, 10.0f)) == 0U ||
+        BallVision_AppendSignedField(&length,
+            BallVision_ScaleFloat(feedback->p_term, 100.0f)) == 0U ||
+        BallVision_AppendSignedField(&length,
+            BallVision_ScaleFloat(feedback->i_term, 100.0f)) == 0U ||
+        BallVision_AppendSignedField(&length,
+            BallVision_ScaleFloat(feedback->d_term, 100.0f)) == 0U ||
+        BallVision_AppendSignedField(&length,
+            BallVision_ScaleFloat(feedback->target_rod_angle, 100.0f)) == 0U ||
+        BallVision_AppendSignedField(&length,
+            BallVision_ScaleFloat(feedback->actual_rod_angle, 100.0f)) == 0U ||
+        BallVision_AppendSignedField(&length,
+            BallVision_ScaleFloat(feedback->rod_rate, 100.0f)) == 0U ||
+        BallVision_AppendSignedField(&length,
+            BallVision_ScaleFloat(feedback->angle_error, 100.0f)) == 0U ||
+        BallVision_AppendSignedField(&length,
+            BallVision_ScaleFloat(feedback->desired_speed, 100.0f)) == 0U ||
+        BallVision_AppendSignedField(&length, feedback->motor_command) == 0U ||
+        BallVision_AppendUnsignedField(&length,
+            feedback->position_age_ms) == 0U ||
+        BallVision_AppendUnsignedField(&length,
+            feedback->position_valid) == 0U ||
+        BallVision_AppendUnsignedField(&length,
+            feedback->protection_state) == 0U ||
+        BallVision_AppendUnsignedField(&length,
+            (uint32_t)feedback->motor_status) == 0U ||
+        BallVision_AppendUnsignedField(&length,
+            feedback->tuning_mode) == 0U ||
+        BallVision_AppendChar(&length, '\n') == 0U) {
+        ball_vision_feedback_drop_count++;
+        return HAL_ERROR;
+    }
+
+    ball_vision_feedback_tx_busy = 1U;
+    status = HAL_UART_Transmit_IT(
+        ball_vision_huart, ball_vision_feedback_tx_buffer, length);
+    if (status != HAL_OK) {
+        ball_vision_feedback_tx_busy = 0U;
+        ball_vision_feedback_drop_count++;
+        return status;
+    }
+    ball_vision_feedback_sent_count++;
+    return HAL_OK;
+}
+
+HAL_StatusTypeDef BallVision_SendTuningAck(
+    const BallVisionTuningAck *ack)
+{
+    HAL_StatusTypeDef status;
+    uint16_t length = 0U;
+
+    if (ack == NULL || ball_vision_huart == NULL ||
+        ball_vision_stream_active == 0U) {
+        return HAL_ERROR;
+    }
+    if (ball_vision_feedback_tx_busy != 0U) {
+        return HAL_BUSY;
+    }
+
+    if (BallVision_AppendChar(&length, 'P') == 0U ||
+        BallVision_AppendChar(&length, 'A') == 0U ||
+        BallVision_AppendUnsignedField(&length, ack->sequence) == 0U ||
+        BallVision_AppendUnsignedField(&length, ack->status) == 0U ||
+        BallVision_AppendSignedField(&length,
+            BallVision_ScaleFloat(ack->outer_kp, 1000000.0f)) == 0U ||
+        BallVision_AppendSignedField(&length,
+            BallVision_ScaleFloat(ack->outer_kd, 1000000.0f)) == 0U ||
+        BallVision_AppendSignedField(&length,
+            BallVision_ScaleFloat(ack->angle_limit, 1000.0f)) == 0U ||
+        BallVision_AppendSignedField(&length,
+            BallVision_ScaleFloat(ack->inner_kp, 1000.0f)) == 0U ||
+        BallVision_AppendSignedField(&length,
+            BallVision_ScaleFloat(ack->inner_kd, 1000.0f)) == 0U ||
+        BallVision_AppendSignedField(&length,
+            BallVision_ScaleFloat(ack->speed_limit, 100.0f)) == 0U ||
+        BallVision_AppendSignedField(&length,
+            BallVision_ScaleFloat(ack->slew, 100.0f)) == 0U ||
+        BallVision_AppendSignedField(&length,
+            BallVision_ScaleFloat(ack->deadband, 100.0f)) == 0U ||
+        BallVision_AppendSignedField(&length,
+            BallVision_ScaleFloat(ack->min_speed, 100.0f)) == 0U ||
+        BallVision_AppendUnsignedField(&length, ack->mode) == 0U ||
+        BallVision_AppendSignedField(&length,
+            BallVision_ScaleFloat(ack->test_target, 100.0f)) == 0U ||
+        BallVision_AppendUnsignedField(&length, ack->remaining_ms) == 0U ||
+        BallVision_AppendChar(&length, '\n') == 0U) {
+        return HAL_ERROR;
+    }
+
+    ball_vision_feedback_tx_busy = 1U;
+    status = HAL_UART_Transmit_IT(
+        ball_vision_huart, ball_vision_feedback_tx_buffer, length);
+    if (status != HAL_OK) {
+        ball_vision_feedback_tx_busy = 0U;
+    }
+    return status;
 }
 
 void BallVision_UART_RxCpltCallback(UART_HandleTypeDef *huart)

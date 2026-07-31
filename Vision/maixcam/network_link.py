@@ -10,9 +10,11 @@ from stream_protocol import (
     decode_packet,
     encode_packet,
     make_config_ack,
+    make_pid_ack,
     make_subscribe_ack,
     parse_subscribe_request,
     parse_set_config_request,
+    parse_pid_request,
 )
 
 
@@ -35,6 +37,7 @@ class UdpVisionLink:
         self.send_errors = 0
         self.control_errors = 0
         self.subscribers = set()
+        self.pending_pid = {}
 
         self.sender = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sender.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
@@ -81,6 +84,7 @@ class UdpVisionLink:
         detector,
         tracker,
         config_module,
+        stm32_link=None,
         max_packets=4,
     ):
         events = []
@@ -91,10 +95,38 @@ class UdpVisionLink:
                 break
 
             request_id = "unknown"
+            action = "unknown"
+            pid_packet = False
             applied = {}
             errors = {}
             try:
                 packet_type = decode_packet(data).get("type")
+                pid_packet = packet_type == "pid_request"
+                if packet_type == "pid_request":
+                    if stm32_link is None:
+                        raise ProtocolError(
+                            "stm32_unavailable", "STM32 link is unavailable"
+                        )
+                    request_id, action, clean = parse_pid_request(
+                        data, self.control_token
+                    )
+                    mcu_sequence = stm32_link.send_pid_request(action, clean)
+                    self.pending_pid[mcu_sequence] = {
+                        "request_id": request_id,
+                        "action": action,
+                        "address": address,
+                    }
+                    events.append(
+                        {
+                            "request_id": request_id,
+                            "ok": True,
+                            "state": "forwarded_to_stm32",
+                            "applied": clean,
+                            "errors": {},
+                            "source": address,
+                        }
+                    )
+                    continue
                 if packet_type == "subscribe":
                     request_id, telemetry_port = parse_subscribe_request(
                         data, self.control_token
@@ -149,6 +181,18 @@ class UdpVisionLink:
                 current = config_snapshot(detector, tracker)
                 ok = False
 
+            if pid_packet:
+                packet = make_pid_ack(
+                    self.session_id,
+                    request_id,
+                    action,
+                    False,
+                    error=str(errors),
+                )
+                self._send_ack(address, packet)
+                events.append(packet)
+                continue
+
             ack = make_config_ack(
                 self.session_id,
                 request_id,
@@ -167,6 +211,27 @@ class UdpVisionLink:
                     "source": address,
                 }
             )
+        return events
+
+    def poll_pid_acks(self, stm32_link):
+        events = []
+        for ack in stm32_link.drain_pid_acks():
+            pending = self.pending_pid.pop(int(ack["seq"]), None)
+            if pending is None:
+                continue
+            packet = make_pid_ack(
+                self.session_id,
+                pending["request_id"],
+                pending["action"],
+                ack["ok"],
+                config=ack["config"],
+                mode=ack["mode"],
+                test_target=ack["test_target"],
+                remaining_ms=ack["remaining_ms"],
+                error="" if ack["ok"] else "STM32 rejected PID request",
+            )
+            self._send_ack(pending["address"], packet)
+            events.append(packet)
         return events
 
     def close(self):

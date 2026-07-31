@@ -220,6 +220,16 @@ def _feedback_summary(feedback):
         "motor_command",
         "motor_status",
         "motor_status_name",
+        "feedback_version",
+        "target_rod_angle_deg",
+        "actual_rod_angle_deg",
+        "rod_rate_deg_s",
+        "angle_error_deg",
+        "desired_motor_speed",
+        "position_age_ms",
+        "position_valid",
+        "protection_state",
+        "tuning_mode",
     )
     return {name: feedback.get(name) for name in fields}
 
@@ -280,6 +290,8 @@ def main(argv=None):
     analysis_report = None
     sync_offset_ms = float(args.sync_offset_ms)
     pending_configs = {}
+    pending_pids = {}
+    latest_pid_config = None
     last_command = None
     manifest = {
         "status": "starting",
@@ -506,6 +518,25 @@ def main(argv=None):
                 tuning.set_status("已发送，等待设备确认…")
             return request_id
 
+        def submit_pid(action, params=None, command_id=None):
+            nonlocal last_command
+            request_id = receiver.send_pid_request(
+                args.token, action, params
+            )
+            pending_pids[request_id] = {
+                "command_id": command_id,
+                "action": str(action),
+                "params": dict(params or {}),
+                "sent_monotonic": time.monotonic(),
+            }
+            last_command = {
+                "id": command_id or request_id,
+                "type": "pid_{}".format(action),
+                "state": "waiting_for_stm32_ack",
+                "params": dict(params or {}),
+            }
+            return request_id
+
         while not stop_requested:
             frame, frame_info = _read_latest_frame(
                 pipeline,
@@ -623,6 +654,43 @@ def main(argv=None):
                             ):
                                 last_bridge_preview = now_preview
 
+            for request_id in list(pending_pids):
+                request = pending_pids[request_id]
+                applied_ack = receiver.pop_ack(request_id)
+                if applied_ack is not None:
+                    pending_pids.pop(request_id, None)
+                    ok = bool(applied_ack.get("ok"))
+                    if ok:
+                        latest_pid_config = dict(
+                            applied_ack.get("config", {})
+                        )
+                    logger.log_event(
+                        "pid_result",
+                        {
+                            "request_id": request_id,
+                            "command_id": request["command_id"],
+                            "ack": applied_ack,
+                        },
+                    )
+                    last_command = {
+                        "id": request["command_id"] or request_id,
+                        "type": "pid_{}".format(request["action"]),
+                        "state": "applied" if ok else "rejected",
+                        "ack": applied_ack,
+                    }
+                elif (
+                    time.monotonic() - request["sent_monotonic"] > 4.0
+                ):
+                    pending_pids.pop(request_id, None)
+                    last_command = {
+                        "id": request["command_id"] or request_id,
+                        "type": "pid_{}".format(request["action"]),
+                        "state": "ack_timeout",
+                    }
+                    logger.log_event(
+                        "pid_ack_timeout", {"request_id": request_id}
+                    )
+
             for request_id in list(pending_configs):
                 request = pending_configs[request_id]
                 applied_ack = receiver.pop_ack(request_id)
@@ -696,6 +764,31 @@ def main(argv=None):
                                 "iteration_api",
                                 command_id=command_id,
                             )
+                        elif command_type == "pid_get":
+                            submit_pid("get", command_id=command_id)
+                        elif command_type == "pid_set":
+                            params = body.get("params")
+                            if not isinstance(params, dict) or not params:
+                                raise ValueError(
+                                    "PID params must be a non-empty object"
+                                )
+                            submit_pid(
+                                "set", params, command_id=command_id
+                            )
+                        elif command_type == "pid_reset":
+                            submit_pid("reset", command_id=command_id)
+                        elif command_type == "pid_test":
+                            submit_pid(
+                                "test",
+                                {
+                                    "mode": body.get("mode"),
+                                    "target": body.get("target"),
+                                    "duration_ms": body.get("duration_ms"),
+                                },
+                                command_id=command_id,
+                            )
+                        elif command_type == "pid_stop":
+                            submit_pid("stop", command_id=command_id)
                         elif command_type == "mark":
                             label = str(body.get("label", "")).strip()
                             if not label:
@@ -831,6 +924,8 @@ def main(argv=None):
                             "pending_config_requests": len(
                                 pending_configs
                             ),
+                            "pending_pid_requests": len(pending_pids),
+                            "pid_config": latest_pid_config,
                             "last_command": last_command,
                         }
                     )

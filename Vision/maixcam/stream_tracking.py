@@ -165,6 +165,12 @@ def main():
             if app.need_exit():
                 break
             stm32_link.poll_commands()
+            for pid_ack in link.poll_pid_acks(stm32_link):
+                print(
+                    "STM32 PID result:",
+                    pid_ack["request_id"],
+                    "applied" if pid_ack["ok"] else pid_ack["error"],
+                )
             feedback_device_ms = time.ticks_ms() - start_ms
             for feedback in stm32_link.drain_feedback():
                 link.send(
@@ -176,7 +182,9 @@ def main():
                     )
                 )
                 sequence += 1
-            for event in link.poll_controls(detector, tracker, cfg):
+            for event in link.poll_controls(
+                detector, tracker, cfg, stm32_link=stm32_link
+            ):
                 if event["ok"]:
                     print(
                         "runtime config applied:",
