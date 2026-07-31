@@ -55,6 +55,7 @@ PID_PARAMETER_ORDER = (
     "slew",
     "deadband",
     "min_speed",
+    "outer_ki",
 )
 
 PID_PARAMETER_MASKS = {
@@ -196,8 +197,8 @@ def parse_pid_ack_line(line):
     """Parse the STM32 ACK emitted only after a RAM update is applied."""
     text = _decode_ascii(line).strip()
     fields = text.split(",")
-    if len(fields) != 15 or fields[0] != "PA":
-        raise ValueError("PID ACK must contain 15 fields and start with PA")
+    if len(fields) not in (15, 16) or fields[0] != "PA":
+        raise ValueError("PID ACK must contain 15/16 fields and start with PA")
     values = [_parse_decimal_integer(value) for value in fields[1:]]
     config = {
         "outer_kp": values[2] / 1000000.0,
@@ -210,6 +211,8 @@ def parse_pid_ack_line(line):
         "deadband": values[9] / 100.0,
         "min_speed": values[10] / 100.0,
     }
+    if len(values) == 15:
+        config["outer_ki"] = values[14] / 1000000.0
     return {
         "seq": values[0] & _UINT32_MASK,
         "status": values[1],

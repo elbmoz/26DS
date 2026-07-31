@@ -12,6 +12,7 @@ INNER_PARAMETER_NAMES = (
 
 OUTER_PARAMETER_NAMES = (
     "outer_kp",
+    "outer_ki",
     "outer_kd",
     "angle_limit",
 )
@@ -22,6 +23,7 @@ PARAMETER_BOUNDS = {
     "speed_limit": (5.0, 300.0),
     "slew": (0.1, 300.0),
     "outer_kp": (0.001, 0.2),
+    "outer_ki": (0.0, 0.2),
     "outer_kd": (0.0, 0.1),
     "angle_limit": (0.5, 10.5),
 }
@@ -32,6 +34,7 @@ SEARCH_STEPS = {
     "speed_limit": (0.70, 1.45, 20.0),
     "slew": (0.50, 2.00, 2.0),
     "outer_kp": (0.70, 1.45, 0.01),
+    "outer_ki": (0.50, 1.80, 0.01),
     "outer_kd": (0.60, 1.70, 0.002),
     "angle_limit": (0.75, 1.30, 2.0),
 }

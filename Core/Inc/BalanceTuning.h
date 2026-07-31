@@ -16,7 +16,8 @@ extern "C" {
 #define BALANCE_TUNING_SLEW           (1UL << 6)
 #define BALANCE_TUNING_DEADBAND       (1UL << 7)
 #define BALANCE_TUNING_MIN_SPEED      (1UL << 8)
-#define BALANCE_TUNING_ALL            ((1UL << 9) - 1UL)
+#define BALANCE_TUNING_OUTER_KI       (1UL << 9)
+#define BALANCE_TUNING_ALL            ((1UL << 10) - 1UL)
 
 #define BALANCE_TUNING_ACTION_RESET   (1U << 0)
 #define BALANCE_TUNING_ACTION_STOP    (1U << 1)

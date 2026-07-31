@@ -25,6 +25,7 @@ typedef struct
     float slew;
     float deadband;
     float min_speed;
+    float outer_ki;
 } BalanceTuningParameters;
 
 typedef struct
@@ -61,6 +62,7 @@ static void BalanceTuning_ReadCurrent(BalanceTuningParameters *parameters)
     parameters->slew = balance_control_config.motor_slew_per_update;
     parameters->deadband = balance_control_config.motor_speed_deadband;
     parameters->min_speed = balance_control_config.motor_min_speed;
+    parameters->outer_ki = balance_control_config.outer_ki_deg_per_px_s;
 }
 
 static void BalanceTuning_WriteCurrent(
@@ -75,6 +77,8 @@ static void BalanceTuning_WriteCurrent(
     balance_control_config.motor_slew_per_update = parameters->slew;
     balance_control_config.motor_speed_deadband = parameters->deadband;
     balance_control_config.motor_min_speed = parameters->min_speed;
+    balance_control_config.outer_ki_deg_per_px_s = parameters->outer_ki;
+    balance_control_config.soft_ki_deg_per_px_s = parameters->outer_ki;
 }
 
 static uint8_t BalanceTuning_ParametersValid(
@@ -89,6 +93,8 @@ static uint8_t BalanceTuning_ParametersValid(
             parameters->outer_kp <= 1.0f &&
             parameters->outer_kd >= 0.0f &&
             parameters->outer_kd <= 1.0f &&
+            parameters->outer_ki >= 0.0f &&
+            parameters->outer_ki <= 1.0f &&
             parameters->angle_limit > 0.0f &&
             parameters->angle_limit <= rod_limit &&
             parameters->inner_kp >= 0.0f &&
@@ -175,7 +181,7 @@ static uint8_t BalanceTuning_ParseSetValues(
     uint32_t mask,
     BalanceTuningParameters *parameters)
 {
-    float *values[9];
+    float *values[10];
     uint8_t index;
 
     values[0] = &parameters->outer_kp;
@@ -187,8 +193,9 @@ static uint8_t BalanceTuning_ParseSetValues(
     values[6] = &parameters->slew;
     values[7] = &parameters->deadband;
     values[8] = &parameters->min_speed;
+    values[9] = &parameters->outer_ki;
 
-    for (index = 0U; index < 9U; index++) {
+    for (index = 0U; index < 10U; index++) {
         if ((mask & (1UL << index)) != 0U) {
             if (BalanceTuning_ParseComma(text) == 0U ||
                 BalanceTuning_ParseFloat(text, values[index]) == 0U) {
@@ -215,6 +222,7 @@ static void BalanceTuning_QueueAck(uint32_t sequence, uint8_t status)
     balance_tuning_ack.slew = current.slew;
     balance_tuning_ack.deadband = current.deadband;
     balance_tuning_ack.min_speed = current.min_speed;
+    balance_tuning_ack.outer_ki = current.outer_ki;
     balance_tuning_ack.mode = balance_tuning_mode;
     balance_tuning_ack.test_target = balance_tuning_test_target;
     balance_tuning_ack.remaining_ms = BalanceTuning_GetRemainingMs(

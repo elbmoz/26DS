@@ -445,6 +445,8 @@ HAL_StatusTypeDef BallVision_SendTuningAck(
         BallVision_AppendSignedField(&length,
             BallVision_ScaleFloat(ack->test_target, 100.0f)) == 0U ||
         BallVision_AppendUnsignedField(&length, ack->remaining_ms) == 0U ||
+        BallVision_AppendSignedField(&length,
+            BallVision_ScaleFloat(ack->outer_ki, 1000000.0f)) == 0U ||
         BallVision_AppendChar(&length, '\n') == 0U) {
         return HAL_ERROR;
     }

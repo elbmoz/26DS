@@ -42,6 +42,7 @@ TUNABLE_SPECS = {
 
 PID_TUNABLE_SPECS = {
     "outer_kp": (0.0, 1.0),
+    "outer_ki": (0.0, 1.0),
     "outer_kd": (0.0, 1.0),
     "angle_limit": (0.1, 20.0),
     "inner_kp": (0.0, 500.0),

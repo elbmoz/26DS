@@ -164,6 +164,15 @@ class Stm32LinkTests(unittest.TestCase):
         self.assertEqual(ack["config"]["inner_kp"], 3.5)
         self.assertEqual(ack["config"]["speed_limit"], 30.0)
 
+        sequence = link.send_pid_request("set", {"outer_ki": 0.012})
+        self.assertEqual(sequence, 2)
+        self.assertEqual(serial.tx_lines[-1], "PS,2,512,0.012\n")
+        ack = parse_pid_ack_line(
+            "PA,2,0,26044,4600,10500,3500,100,3000,15000,"
+            "30,50,0,0,0,12000"
+        )
+        self.assertEqual(ack["config"]["outer_ki"], 0.012)
+
     def test_successful_pid_ack_restores_stream_after_maix_restart(self):
         serial = FakeSerial()
         link = Stm32Link(serial)

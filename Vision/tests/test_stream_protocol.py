@@ -245,13 +245,14 @@ class StreamProtocolTests(unittest.TestCase):
             "p1",
             "secret",
             "set",
-            {"inner_kp": 4.0, "speed_limit": 30},
+            {"inner_kp": 4.0, "speed_limit": 30, "outer_ki": 0.012},
         )
         request_id, action, params = parse_pid_request(
             encode_packet(request), "secret"
         )
         self.assertEqual((request_id, action), ("p1", "set"))
         self.assertEqual(params["inner_kp"], 4.0)
+        self.assertEqual(params["outer_ki"], 0.012)
 
         with self.assertRaises(ProtocolError):
             parse_pid_request(encode_packet(request), "wrong")

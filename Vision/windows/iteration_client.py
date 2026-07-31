@@ -40,6 +40,7 @@ ALIASES = {
 }
 
 PID_ALIASES = {
+    "outer_ki_deg_per_px_s": "outer_ki",
     "outer_angle_limit": "angle_limit",
     "angle_kp_speed_per_deg": "inner_kp",
     "angle_kd_speed_per_deg_s": "inner_kd",

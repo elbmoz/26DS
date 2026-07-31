@@ -72,6 +72,7 @@ typedef struct
     float slew;
     float deadband;
     float min_speed;
+    float outer_ki;
     uint8_t mode;
     float test_target;
     uint32_t remaining_ms;
