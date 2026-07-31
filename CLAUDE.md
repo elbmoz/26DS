@@ -38,21 +38,25 @@ Preprocessor defines: `USE_HAL_DRIVER;STM32F407xx`
 7. `i2c.c/.h`, `OLED.c/.h` — STM32F4 HAL I2C1 OLED driver on PB8/PB9.
 8. `LineFollow.c/.h` — 8-sensor weighted-centroid PD line follower with curve
    slowdown and IMU unwrapped-yaw one-lap stopping.
-9. `BalanceControl.c/.h` — Question 2 position PID driving USART1 motor address
-   `0x03`. It uses MaixCAM position for P/I and filtered axis velocity for D.
+9. `BalanceControl.c/.h` — Question 2 cascaded controller for USART1 motor
+   address `0x03`. A dt-aware outer PID converts MaixCAM ball position and
+   filtered velocity into a target rod angle; an inner proportional loop uses
+   motor-position feedback to produce a bounded, slew-limited speed command.
    The current phase regulates to center (`target=0`); the later
    `+5 cm -> -5 cm` sequence has reserved pixel targets and a target setter.
-10. `MotorPositionMonitor.c/.h` — Isolated Question 9 read-only monitor for
-    USART1 motor address `0x03`. It periodically requests command `0x36`,
-    tracks reply status, and exposes the raw `int32_t` position and angle.
+10. `MotorPositionMonitor.c/.h` — Shared non-blocking `0x36` position reader
+    for Questions 2 and 9. Question 2 selects a faster configurable period for
+    rod-angle feedback; Question 9 retains the 100 ms diagnostic default.
 11. `Question9Telemetry.c/.h` — Isolated 5 Hz non-blocking Question 9
     telemetry sender on USART6. It emits `Q9,...\n` frames containing motor
     position, zero-relative three-axis angles, validity and motion status.
 12. `DS_task.c/.h` — Question selection and start state machine. Question 1
     runs line following, Question 2 runs center-return control, and Question 9
-    displays motor 3 position while alternating isolated `+50/-50` relative
-    moves without starting either controller.
-13. `PID.c/.h` — Generic PID library reused by the balance-frame controller.
+    displays motor 3 position while moving between independently adjustable
+    upper/lower endpoints, without starting either controller or changing
+    Question 2 settings.
+13. `PID.c/.h` — Retained generic PID library. Question 2 uses its own
+    dt-aware, gain-scheduled cascaded law in `BalanceControl`.
 14. `main.c` — Initializes the active peripherals and repeatedly calls
     `DS_Run()` and `DS_Task_Run()`.
 
@@ -60,6 +64,39 @@ TIM2 provides a 1 ms tick through `DS_1msTickFromISR()`. UART RX callbacks
 dispatch to the motor, vision, and IMU handlers; the UART TX callback releases
 the active Question 2 feedback or Question 9 telemetry buffer. Each handler
 checks its UART instance.
+
+## Balance-Motor Startup Invariant
+
+Immediately after `DS_Init()` and before `DS_Task_Init()`, `main.c` must command
+balance motor address `0x03` to move `+240` relative pulses at speed `50` and
+acceleration `10`. This is an intentional power-on pre-positioning move that
+places the mechanism near its usable middle position. It is not a homing move
+or a calibrated zero. Do not remove, invert or retune this command unless the
+mechanical startup requirement explicitly changes. Question 9 collects motion,
+motor-position and IMU telemetry after this pre-positioning, but it must not
+write Question 2 zero, linkage-ratio, direction or controller parameters.
+Question 2 calibration values are filled only after the user uploads captured
+data and the offline analysis is complete.
+
+## Question 9 Data-Collection Invariant
+
+Question 9 is a repeatable excitation and telemetry task, not an automatic
+calibrator. `DS_TASK_Q9_UPPER_PULSES` and `DS_TASK_Q9_LOWER_PULSES` are
+independently adjustable non-negative endpoint offsets relative to the
+stable Question 9 start position; the current upper/lower values are
+`210`/`150`. After PB7 confirmation, the position monitor must first observe
+the power-on `+240` move and residual motion settle. Motor `0x03` then moves
+first to the upper endpoint and continuously crosses between the upper and
+lower endpoints at speed `50` and acceleration `10`. Do not reverse on a fixed
+timer: require observed
+position change followed by consecutive stable `0x36` samples, then keep the
+configured endpoint dwell. The crossing command uses the sum of both offsets
+so unequal amplitudes cannot accumulate drift. `Question9Telemetry` must keep
+sending the existing 13-field `Q9,...\n` frames at 5 Hz on USART6. Do not
+remove this communication, collapse the two endpoint settings into one,
+replace the loop with a finite auto-calibration sequence, or let Question 9
+write any `balance_control_config` field. Captured data is uploaded and
+analyzed offline before Question 2 calibration values are entered.
 
 ## Hardware Map
 
@@ -101,8 +138,8 @@ The four-wheel mecanum/Z-axis layer and logistics task chain were removed:
 - `servo`, `LobotServoController`, `huaner_servo`, `ServoMotorControl`
 - `QRcode`, `laser`, `bluetooth`
 
-Do not reintroduce these modules for the new two-wheel car. Reuse `PID`
-algorithms through a control module built on top of DS instead.
+Do not reintroduce these modules for the new two-wheel car. Build any new
+control algorithms through a dedicated module on top of DS instead.
 
 ## CubeMX Pattern
 

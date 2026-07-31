@@ -57,8 +57,8 @@ F,<seq>,<mcu_ms>,<vision_frame>,<vision_age_ms>,<position_x10>,
 | `vision_frame` | 本次 PID 使用的 STM32视觉接收帧号 |
 | `vision_age_ms` | 下发命令时 STM32内视觉数据年龄 |
 | `position_x10`, `velocity_x10`, `error_x10` | 除以 10 后为参考像素位置、参考像素/秒、`target-position` |
-| `p_x100`, `i_x100`, `d_x100` | 除以 100 后为乘 `motor_direction` 之前的 PID 分量 |
-| `motor_command` | 方向变换、限幅、取整后的实际有符号速度命令 |
+| `p_x100`, `i_x100`, `d_x100` | 除以 100 后为球位置外环的 P/I/D 目标杆角分量，单位 ° |
+| `motor_command` | 杆角内环经方向、限幅、slew 和取整后的有符号速度命令 |
 | `motor_status` | 0=`HAL_OK`、1=`HAL_ERROR`、2=`HAL_BUSY`、3=`HAL_TIMEOUT` |
 
 ## 3. 会话建立

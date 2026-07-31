@@ -28,8 +28,8 @@ PLOTS = (
         (("velocity_px_s", "velocity", "#a78bfa"),),
     ),
     (
-        "PID components before motor_direction",
-        "controller units",
+        "Outer PID target-angle components",
+        "rod deg",
         (
             ("p_term", "P", "#ff6b6b"),
             ("i_term", "I", "#4ecdc4"),

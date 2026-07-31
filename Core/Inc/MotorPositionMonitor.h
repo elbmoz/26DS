@@ -7,8 +7,9 @@ extern "C" {
 
 #include "stm32f4xx_hal.h"
 
-#define MOTOR_POSITION_MONITOR_PERIOD_MS    100U
-#define MOTOR_POSITION_MONITOR_RX_BYTES     12U
+#define MOTOR_POSITION_MONITOR_PERIOD_MS        100U
+#define MOTOR_POSITION_MONITOR_MIN_PERIOD_MS      5U
+#define MOTOR_POSITION_MONITOR_RX_BYTES          12U
 
 typedef struct
 {
@@ -16,6 +17,8 @@ typedef struct
     volatile float angle_deg;
     volatile uint32_t request_count;
     volatile uint32_t update_count;
+    volatile uint32_t last_update_ms;
+    volatile uint32_t request_period_ms;
     volatile uint32_t uart_error;
     volatile HAL_StatusTypeDef last_status;
     volatile uint8_t rx_length;
@@ -29,8 +32,10 @@ extern MotorPositionMonitorState motor_position_monitor_state;
 
 void MotorPositionMonitor_Init(void);
 void MotorPositionMonitor_Start(void);
+void MotorPositionMonitor_StartWithPeriod(uint32_t request_period_ms);
 void MotorPositionMonitor_Update(void);
 void MotorPositionMonitor_Stop(void);
+uint8_t MotorPositionMonitor_IsFresh(uint32_t maximum_age_ms);
 
 #ifdef __cplusplus
 }

@@ -327,7 +327,7 @@ python Vision\tools\plot_stm32_feedback.py `
 ```
 
 输出为同目录的 `stm32_feedback.svg`，包含参考位置/目标/控制误差、速度、
-乘 `motor_direction` 前的 P/I/D、实际有符号电机命令和视觉数据年龄。
+球位置外环的 P/I/D 目标杆角分量、实际有符号电机命令和视觉数据年龄。
 橙色虚线表示 STM32反馈 `seq` 跳号，红色点线表示
 `motor_status != HAL_OK`。脚本也可直接读取 `stm32_feedback.csv` 或
 `telemetry.jsonl`。
@@ -463,7 +463,8 @@ F,<seq>,<mcu_ms>,<vision_frame>,<vision_age_ms>,<position_x10>,
   <motor_command>,<motor_status>\n
 ```
 
-MaixCAM非阻塞解析反馈：`x10` 字段除以 10，`x100` 字段除以 100；
+MaixCAM非阻塞解析反馈：`x10` 字段除以 10；P/I/D 的 `x100` 字段除以
+100 后单位为目标杆角度数，`motor_command` 是杆角内环最终输出。
 `motor_status` 的 0/1/2/3 分别对应
 `HAL_OK/HAL_ERROR/HAL_BUSY/HAL_TIMEOUT`。比赛图传模式将每条反馈转发为
 `stm32_feedback` UDP报文，由 Windows同时写入原始 `telemetry.jsonl` 和

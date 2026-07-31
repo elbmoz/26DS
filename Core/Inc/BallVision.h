@@ -20,6 +20,8 @@ extern "C" {
  * feedback line to MaixCAM:
  *   F,seq,mcu_ms,vision_frame,vision_age_ms,position_x10,velocity_x10,
  *     error_x10,p_x100,i_x100,d_x100,motor_command,motor_status\n
+ * P/I/D are the outer ball-controller contributions in 0.01 rod degrees;
+ * motor_command is the final signed RS485 speed request from the angle loop.
  *
  * Missing sequence numbers mean feedback was dropped because USART6 was
  * still transmitting. Motor control is never delayed to wait for logging.

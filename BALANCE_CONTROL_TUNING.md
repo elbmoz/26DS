@@ -1,53 +1,72 @@
-# 第二题小球中心回正与 PID 调试
+# 第二题串级平衡控制与标定
 
-## 当前流程
+## 当前控制结构
 
-题目 2 当前只实现把小球稳定到摆杆中心点：
+第二题已经由“视觉误差直接控制电机速度”改为参考工程使用的串级结构：
+
+```text
+MaixCAM 球位置/球速度
+          |
+          v
+位置 PID 外环 -------> 目标杆角
+                           |
+0x36 电机位置 -> 实际杆角  |
+          |                |
+          +------ 角度误差-+
+                           |
+                           v
+                    角度 P 内环
+                           |
+                           v
+               RS485 有符号速度命令
+```
+
+外环只在收到新的视觉帧时更新，避免同一帧被重复积分。内环按
+`control_period_ms` 运行，使用 `MotorPositionMonitor` 的最近一次有效位置。
+控制计算完成后再推进非阻塞 `0x36` 查询，避免位置请求占用 USART1 时始终
+无法发送速度命令。
+
+题目 2 使用 `motor_position_period_ms` 指定位置读取周期；题目 9 继续使用
+`MOTOR_POSITION_MONITOR_PERIOD_MS=100 ms` 的诊断周期。
+
+## 任务流程
 
 1. PB6 选择题号 2。
-2. PB7 确认后，STM32 启动 PID、挂接 USART6 中断接收并发送 `c2`。
-3. MaixCAM 收到 `c2` 后才以 50 Hz 发送位置误差和轴向速度。
-4. 再按 PB7，3 号平衡架电机停止，STM32 发送 `ok`，MaixCAM 停止输出。
+2. PB7 启动后，控制器先停止 3 号电机、启动位置读取，并启动 USART6 视觉
+   流、发送 `c2`。
+3. MaixCAM 发送 `B,error_px,velocity_px_s\n`。
+4. 第一次有效电机位置到达后，如果
+   `capture_motor_zero_on_start=1`，该位置会被记录为本次水平零点。
+5. 有效视觉控制目标杆角；视觉失效时目标杆角回到 0°。
+6. 电机位置超过超时阈值时立即停止电机，不允许无角度反馈运行。
+7. 再按 PB7，先取消位置查询，再停止电机并向 MaixCAM 发送 `ok`。
 
-当前到达中心后不会自动结束，而是继续维持中心，方便观察稳定性。后续
-`+5 cm -> -5 cm` 状态机可直接调用：
+当前仍只持续调节到中心，不自动结束。后续 `+5 cm -> -5 cm` 状态机可调用：
 
 ```c
 BalanceControl_SetTarget(balance_control_config.positive_5cm_target);
 BalanceControl_SetTarget(balance_control_config.negative_5cm_target);
 ```
 
-当前标定约为 `18.2 px/cm`，所以两个预留目标为 `+91 px` 和 `-91 px`。
+当前视觉标定为 `18.2 px/cm`，预留目标为 `+91 px` 和 `-91 px`。
 
-当前固件已经启用平衡架速度输出。上电时 `main.c` 仍会单独发送一次
-`+240` 脉冲、速度 50、加速度 10 的相对位置命令；该动作不是回零，重复
-复位会重复执行，实车上电前必须确认机械行程。
+> `capture_motor_zero_on_start=1` 假定进入题目 2 时杆已经物理调平。它只是
+> 临时调试方案，不是机械回零。完成零点标定后应写入
+> `motor_zero_angle_deg` 并把自动捕获关闭。
 
-## 串口与数据符号
+## 串口与控制反馈
 
-USART6 使用 PC6=TX、PC7=RX，115200、8N1。有效帧为：
+USART6 使用 PC6=TX、PC7=RX，115200、8N1：
 
 ```text
 B,<error_px>,<velocity_px_s>\n
+none\n
 ```
 
-例如：
+误差和速度均以视觉右侧为正。MaixCAM 的 480 宽检测结果发送前乘
+`640/480`，STM32 使用参考像素标定。
 
-```text
-B,-27,18
-```
-
-表示小球位于中心左侧 27 个参考像素，同时以 18 px/s 向视觉右侧运动。
-误差和速度均以视觉右侧为正。丢球或预测续航结束时发送 `none\n`。
-
-MaixCAM 的检测通道是 480 宽，但发送前乘 `CONTROL_OUTPUT_SCALE=640/480`，
-因此 STM32 始终使用原 640 宽参考像素标定。连续 200 ms 没有有效帧或收到
-`none` 时，控制器立即停电机并清空 PID 历史。
-
-### 单片机控制反馈
-
-每次向 3 号电机尝试发送速度命令或停止命令后，STM32 通过 USART6 TX
-异步返回：
+STM32 保持原有 13 字段反馈协议：
 
 ```text
 F,<seq>,<mcu_ms>,<vision_frame>,<vision_age_ms>,
@@ -55,122 +74,157 @@ F,<seq>,<mcu_ms>,<vision_frame>,<vision_age_ms>,
   <p_x100>,<i_x100>,<d_x100>,<motor_command>,<motor_status>\n
 ```
 
-例如：
+其中 P/I/D 已变为“目标杆角外环”的三个分量，除以 100 后单位为度；
+`motor_command` 是角度内环最终尝试发送的 RS485 速度命令。协议字段数不变，
+现有 MaixCAM 和 Windows 记录工具仍可解析。
+
+## 控制公式和方向
+
+外环：
 
 ```text
-F,27,18420,913,4,1025,-230,-1025,-123,0,25,1,0
+error_px = target_px - ball_position_px
+
+u_deg = Kp * error_px
+      + Ki * integral(error_px * dt)
+      + Kd * (-ball_velocity_px_s)
+
+target_rod_angle_deg = tilt_direction * clamp(u_deg, angle_limit)
 ```
 
-表示 MCU 在 18420 ms 使用第 913 个视觉接收帧；该帧年龄 4 ms；位置
-102.5 px、速度 -23.0 px/s、控制误差 -102.5 px；方向变换前 P/I/D 分量
-分别为 -1.23、0、0.25；最终电机命令为 +1，`HAL_OK=0`。
-
-反馈使用中断发送，不等待串口发完。若前一反馈仍占用 USART6，则丢弃当前
-日志而不延迟 PID；下一条 `seq` 会跳号。`motor_status` 对应 HAL 状态：
-`0=OK`、`1=ERROR`、`2=BUSY`、`3=TIMEOUT`。
-
-## 控制方向与算法
-
-已知机构关系：
+内环：
 
 ```text
-电机命令为正/顺时针 -> 小球向视觉左侧运动
-视觉误差为正         -> 小球在中心右侧
+rod_angle_deg =
+    (motor_angle_deg - motor_zero_angle_deg)
+    * rod_angle_per_motor_degree
+
+angle_error_deg = target_rod_angle_deg - rod_angle_deg
+
+motor_speed =
+    motor_direction
+    * angle_kp_speed_per_deg
+    * angle_error_deg
 ```
 
-通用 PID 内部误差为：
+当前已知关系是“正电机命令让球向视觉左侧运动”，因此默认：
 
 ```text
-control_error = target - vision_position
+tilt_direction  = -1
+motor_direction = +1
 ```
 
-MaixCAM 已提供滤波后的轴向速度，因此不再对整数位置二次差分，而是使用：
+球位于右侧时，位置误差为负，外环输出为负，经 `tilt_direction=-1`
+得到正目标杆角，内环发出正电机命令。若电机正命令与位置读数的增量方向不
+一致，修改 `motor_direction`；若杆角正方向与球滚动关系相反，修改
+`tilt_direction` 或带符号的 `rod_angle_per_motor_degree`。不要同时修改
+多个方向参数。
 
-```text
-before_direction = Kp * control_error
-                 + Ki * sum(control_error)
-                 + Kd * (-vision_velocity)
+## 从参考工程迁移的调度逻辑
 
-motor_command = motor_direction * before_direction
-motor_direction = -1
-```
+以下行为已经保留：
 
-在中心目标 `target=0` 时等价于：
+- 距目标较远时使用基础 P/I/D 和角度限幅。
+- 进入 `hold_band_px` 后降低 P、D 和目标角限幅，并使用近中心积分消除静差。
+- 进入 `fine_band_px` 且速度很小时，不继续倾杆追位置，而是让杆回到 0°。
+- 球速超过 `damping_velocity_px_s` 后降低 P、增强 D、收紧目标角。
+- 球速超过 `freeze_integral_velocity_px_s` 后暂停积分并逐步泄放。
+- 电机速度经过最大值、死区、最小有效速度和每周期 slew 限制。
+- 杆角越过 `rod_angle_limit_deg` 时清积分并强制目标回到 0°。
+- 丢失视觉时只执行回水平；丢失电机位置时立即停机。
 
-```text
-motor_command = Kp * vision_error
-              + Ki * sum(vision_error)
-              + Kd * vision_velocity
-```
-
-所以球在右侧时输出正转，使球向左回中心；球正在快速向右运动时，速度 D 项
-也会提前给出正转制动。该方向与用户提供的机构关系一致。
-
-## 当前实车调试参数
+## 暴露的关键参数
 
 参数集中在 `Core/Src/BalanceControl.c` 的
-`balance_control_config`：
+`balance_control_config`。
 
-| 参数 | 当前值 | 作用 |
+### 外环和近中心调度
+
+| 参数 | 当前默认值 | 单位/作用 |
 |---|---:|---|
-| `kp` | 0.012 | 像素位置的主要回正力度 |
-| `ki` | 0 | 当前关闭积分 |
-| `kd` | 0.008 | 直接乘视觉速度，抑制冲过中心 |
-| `pid_deadband` | 1 px | 中心位置死区 |
-| `velocity_deadband` | 5 px/s | 小速度死区 |
-| `integral_limit` | 3000 | 原始误差积分累计限幅 |
-| `output_limit` | 180 | 最大有符号电机速度命令 |
-| `control_period_ms` | 5 ms | PID/电机命令周期；视觉数据仍为 50 Hz |
-| `motor_slope` | 0 | 当前速度命令斜率参数 |
-| `motor_direction` | -1 | 匹配“正转让球向视觉左走” |
-| `stable_error` | 18 px | 约等于题目要求的 ±1 cm |
-| `stable_velocity` | 25 px/s | 稳定时还必须接近静止 |
-| `stable_cycles` | 25 | 按当前 5 ms 周期约 0.125 s 才标记稳定 |
+| `outer_kp_deg_per_px` | 0.06044 | 位置 P，deg/px |
+| `outer_ki_deg_per_px_s` | 0.03297 | 位置积分，deg/(px·s) |
+| `outer_kd_deg_per_px_s` | 0.18681 | 视觉速度 D，deg/(px/s) |
+| `outer_integral_limit_px_s` | 109.2 | 积分限幅，px·s |
+| `outer_angle_limit_deg` | 7.2 | 外环最大目标杆角 |
+| `hold_band_px` | 18.2 | 约等于离目标 1 cm |
+| `fine_band_px` | 3.64 | 约等于离目标 2 mm |
+| `fine_velocity_px_s` | 18.2 | 精细区回水平速度阈值 |
+| `soft_ki_deg_per_px_s` | 0.10989 | 近中心专用积分 |
+| `damping_velocity_px_s` | 50.96 | 开始高速阻尼 |
+| `freeze_integral_velocity_px_s` | 81.90 | 冻结积分速度 |
 
-这些是限制输出的首次闭环参数，不是最终竞赛参数。电机传动比、摆杆倾角
-灵敏度和实际摩擦未知，因此第一次必须有人随时按 PB7 停止。
+这些数值由参考工程的 mm/mm/s 参数按 `18.2 px/cm` 换算而来，并不代表
+已经适配当前机械结构和 MaixCAM 速度噪声。
+
+### 位置、角度和执行器
+
+| 参数 | 当前默认值 | 作用 |
+|---|---:|---|
+| `motor_zero_angle_deg` | 0 | 标定后的电机水平零点 |
+| `rod_angle_per_motor_degree` | 1.0 | 电机角到实际杆角的带符号比例 |
+| `rod_angle_limit_deg` | 10.0 | 杆角软件保护范围 |
+| `capture_motor_zero_on_start` | 1 | 首个有效位置作为临时零点 |
+| `angle_kp_speed_per_deg` | 9.2 | 角度内环 P |
+| `motor_speed_limit` | 180 | RS485 最大速度命令，约 18 RPM |
+| `motor_speed_deadband` | 1 | 小于等于该值视为停止 |
+| `motor_min_speed` | 4 | 非零时的最小命令 |
+| `motor_slew_per_update` | 16 | 每个控制周期最大速度变化 |
+| `motor_slope` | 0 | 电机驱动器速度模式斜率字段 |
+| `control_period_ms` | 20 ms | 串级控制周期 |
+| `motor_position_period_ms` | 20 ms | 题目 2 的 0x36 查询周期 |
+| `motor_position_timeout_ms` | 60 ms | 位置失效停机阈值 |
+
+`angle_kp_speed_per_deg=9.2` 假设电机速度协议约 `10≈1 RPM` 且杆与电机
+直接连接，用来近似参考工程的角度内环响应。存在减速机构时必须重新计算。
+
+稳定判定使用 `stable_error_px=18.2`、`stable_velocity_px_s=25` 和
+`stable_frames=25`。计数单位是新的视觉帧，50 Hz 时约需连续 0.5 秒。
 
 ## OLED 题目 2 页面
 
 ```text
-Q2 CENTER RX:V R
+Q2 RX:V P:V S:X
 E:-027.0 V:+018
-OUT:-000 ST:000
+M:+016 A:+001.2
 TIME:0000.0s
 ```
 
-- `RX:V/X`：USART6 数据有效/无效。
-- `E`：视觉发送的位置误差。
-- `V`：视觉发送的轴向速度。
-- `OUT`：实际发给 3 号电机的有符号速度命令。
-- `ST`：连续满足稳定条件的周期数。
-- 右上角 `S/R`：已经稳定/仍在调节。
+- `RX:V/X`：视觉有效/无效。
+- `P:V/X`：电机位置反馈有效/无效。
+- `S:V/X`：已经稳定/仍在调节。
+- `E`、`V`：球的位置误差和轴向速度。
+- `M`：最终有符号电机速度命令。
+- `A`：相对水平零点的实际杆角。
 
-## 推荐调试顺序
+## 首次标定和调试顺序
 
-1. 先不放球或托住机构。进入题目 2 后确认 OLED 从 `RX:X` 变成 `RX:V`；
-   手动移动球时 `E` 和 `V` 都应变化。
-2. 球移到视觉右侧时 `E` 必须为正，移到左侧时必须为负。如果相反，应先
-   修正视觉轴线方向，不要用 PID 参数掩盖坐标错误。
-3. 托住球制造正误差，确认电机命令为正且实际正转让球向左。如果实际机械
-   方向与描述相反，只把 `motor_direction` 改为 `+1`。
-4. 确认接收和方向都正确后，观察 `control.csv` 中的 `motor_status` 和
-   `motor_command`。若电机完全带不动，先小幅增加 `kp`；若动作过猛，
-   先降低 `output_limit`，再降低 `kp`。
-5. 若能回中但持续往返，先增加 `kd`，每次约增加 `0.01～0.02`；若输出被
-   速度噪声带着抖动，则降低 `kd` 或增大 `velocity_deadband`。
-6. 只有存在固定方向的长期偏差时才增加 `ki`。出现慢周期摆动应首先减小
-   `ki`。
-7. 最后分别从约 `+91 px` 和 `-91 px` 放球，验证两侧都能在 5 秒内进入
-   `|E|<=18 px` 且速度下降，再开始实现完整 `+5 cm -> -5 cm` 状态机。
+1. 题目 9 在独立可调的上、下端点之间循环采集，不执行自动标定，也不修改
+   `balance_control_config`。记录 `DS_TASK_Q9_UPPER_PULSES`、
+   `DS_TASK_Q9_LOWER_PULSES`、IMU 安装方向、杆初始姿态和机械连接方式。
+2. 确认启动后，题目 9 会先等待初始电机位置稳定，再记录 IMU 相对零点；
+   每次必须检测到位置变化并等待连续稳定位置更新后，才在端点停留并反向，
+   不使用可能提前截断运动的固定反向周期。
+3. 采集多个完整往复周期并保存 USART6 的 `Q9` 遥测；上传数据后，根据电机
+   位置、三轴姿态、运动方向和时间序列离线分析水平零点、有效倾角轴、带符号
+   传动比和回差。
+4. 数据分析完成前不要根据单次观察写死题目 2 参数。分析后再填写
+   `motor_zero_angle_deg`、`rod_angle_per_motor_degree`、
+   `motor_direction` 及必要的控制限幅，然后不放球启动题目 2，确认
+   `P:X` 很快变为 `P:V`，实际杆角 `A` 接近 0°。
+5. 首次带球前把 `outer_angle_limit_deg` 临时降到约 1～2°、
+   `motor_speed_limit` 降到约 20～40，并确保有人随时按 PB7。
+6. 托住球制造小的正、负误差，分别确认目标杆角、实际杆角和电机命令方向。
+   方向错误时一次只修改一个方向参数。
+7. 先验证角度内环能快速追角且不振荡，再调球位置外环。
+8. 首轮外环调试可先把两个 Ki 参数设为 0，只调 P 和 D；确认没有持续偏差后
+   再恢复小积分。
+9. 若球来回冲过中心，优先降低目标角限幅或 P，并检查视觉速度噪声，再调整
+   D；若电机方向频繁跳变，降低 D 或增加速度滤波。
+10. 最后验证视觉 `none` 时杆能回水平，拔掉位置反馈时电机能在 60 ms 左右
+   停止，再逐步放开速度和角度限制。
+11. 两侧中心控制可靠后，再实现 `+5 cm -> -5 cm` 状态机。
 
-默认 stream 模式下，MaixCAM 将每条 `F` 帧转发为独立 UDP `control` 包，
-Windows 会话目录保存 `control.csv`。绘图命令：
-
-```powershell
-python Vision\tools\plot_control_feedback.py `
-  Vision\captures\stream_sessions\<本次目录>\control.csv
-```
-
-当前硬件映射没有摆杆角度、零位或限位反馈。第一次闭环前应限制机械行程；
-若机构存在硬限位，后续必须加入回零和越界保护。
+默认 stream 模式仍会把 `F` 帧保存到 `control.csv`。当前反馈能观察外环
+P/I/D 和最终电机命令；目标杆角、实际杆角、角度误差及位置更新时间可直接
+在 Keil Watch 中查看 `balance_control_state`。

@@ -9,10 +9,17 @@ extern "C" {
 
 #define DS_TASK_MAX_QUESTION          9U
 #define DS_TASK_DISPLAY_PERIOD_MS     200U
-#define DS_TASK_Q9_MOVE_PERIOD_MS     1000U
-#define DS_TASK_Q9_MOVE_PULSES        50
+/* Non-negative endpoint offsets from the stable Question 9 start position. */
+#define DS_TASK_Q9_UPPER_PULSES       210
+#define DS_TASK_Q9_LOWER_PULSES       150
 #define DS_TASK_Q9_MOVE_SPEED         50U
 #define DS_TASK_Q9_MOVE_ACCELERATION  10U
+#define DS_TASK_Q9_ENDPOINT_DWELL_MS  500U
+#define DS_TASK_Q9_MIN_MOVE_MS        200U
+#define DS_TASK_Q9_MOVE_TIMEOUT_MS    5000U
+#define DS_TASK_Q9_POSITION_FRESH_MS  300U
+#define DS_TASK_Q9_STABLE_DELTA       2U
+#define DS_TASK_Q9_STABLE_UPDATES     3U
 
 typedef enum
 {

@@ -16,8 +16,9 @@ extern "C" {
  *    imu_valid,position_valid,position_status,position_updates,
  *    move_direction,move_status\n
  *
- * Angles are relative to the Question 9 start orientation and use 0.1 degree
- * units. HAL status values are 0=OK, 1=ERROR, 2=BUSY and 3=TIMEOUT.
+ * Angles are relative to the stable Question 9 start orientation and use
+ * 0.1 degree units. move_direction/move_status report the latest endpoint
+ * move. HAL status values are 0=OK, 1=ERROR, 2=BUSY and 3=TIMEOUT.
  */
 typedef struct
 {

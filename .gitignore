@@ -8,6 +8,10 @@
 Thumbs.db
 Desktop.ini
 
+# Python tooling and test caches
+__pycache__/
+*.py[cod]
+
 # Keil user-specific files and generated build output
 MDK-ARM/*.uvguix.*
 MDK-ARM/gc/
@@ -20,4 +24,3 @@ MDK-ARM/*.htm
 MDK-ARM/*.hex
 MDK-ARM/*.axf
 MDK-ARM/*.build_log.htm
-

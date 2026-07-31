@@ -65,6 +65,9 @@ void MotorPositionMonitor_Init(void)
     motor_position_monitor_state.angle_deg = 0.0f;
     motor_position_monitor_state.request_count = 0U;
     motor_position_monitor_state.update_count = 0U;
+    motor_position_monitor_state.last_update_ms = 0U;
+    motor_position_monitor_state.request_period_ms =
+        MOTOR_POSITION_MONITOR_PERIOD_MS;
     motor_position_monitor_state.consecutive_failures = 0U;
     MotorPositionMonitor_ClearDiagnostics();
     motor_position_monitor_state.last_status = HAL_OK;
@@ -76,12 +79,34 @@ void MotorPositionMonitor_Init(void)
 
 void MotorPositionMonitor_Start(void)
 {
+    MotorPositionMonitor_StartWithPeriod(
+        MOTOR_POSITION_MONITOR_PERIOD_MS);
+}
+
+void MotorPositionMonitor_StartWithPeriod(uint32_t request_period_ms)
+{
     uint32_t now = HAL_GetTick();
+
+    /*
+     * A task switch may restart the shared monitor while the previous owner
+     * still has a 0x36 transaction in flight. Cancel it before resetting the
+     * local pending flag so that a late reply cannot be consumed by the new
+     * control session.
+     */
+    if (motor_position_request_pending != 0U) {
+        DS_BalanceCancelPositionRequest();
+    }
+
+    if (request_period_ms < MOTOR_POSITION_MONITOR_MIN_PERIOD_MS) {
+        request_period_ms = MOTOR_POSITION_MONITOR_MIN_PERIOD_MS;
+    }
 
     motor_position_monitor_state.position = 0;
     motor_position_monitor_state.angle_deg = 0.0f;
     motor_position_monitor_state.request_count = 0U;
     motor_position_monitor_state.update_count = 0U;
+    motor_position_monitor_state.last_update_ms = 0U;
+    motor_position_monitor_state.request_period_ms = request_period_ms;
     motor_position_monitor_state.consecutive_failures = 0U;
     MotorPositionMonitor_ClearDiagnostics();
     motor_position_monitor_state.last_status = HAL_BUSY;
@@ -89,7 +114,7 @@ void MotorPositionMonitor_Start(void)
     motor_position_monitor_state.active = 1U;
     motor_position_request_pending = 0U;
     motor_position_last_request_ms =
-        now - MOTOR_POSITION_MONITOR_PERIOD_MS;
+        now - request_period_ms;
 }
 
 void MotorPositionMonitor_Update(void)
@@ -122,6 +147,7 @@ void MotorPositionMonitor_Update(void)
                 motor_position_monitor_state.position = position;
                 motor_position_monitor_state.angle_deg = angle;
                 motor_position_monitor_state.update_count++;
+                motor_position_monitor_state.last_update_ms = now;
                 motor_position_monitor_state.consecutive_failures = 0U;
                 motor_position_monitor_state.valid = 1U;
             } else {
@@ -133,7 +159,7 @@ void MotorPositionMonitor_Update(void)
     }
 
     if ((uint32_t)(now - motor_position_last_request_ms) <
-        MOTOR_POSITION_MONITOR_PERIOD_MS) {
+        motor_position_monitor_state.request_period_ms) {
         return;
     }
 
@@ -160,4 +186,17 @@ void MotorPositionMonitor_Stop(void)
     }
     motor_position_monitor_state.active = 0U;
     motor_position_request_pending = 0U;
+}
+
+uint8_t MotorPositionMonitor_IsFresh(uint32_t maximum_age_ms)
+{
+    if (motor_position_monitor_state.active == 0U ||
+        motor_position_monitor_state.valid == 0U ||
+        motor_position_monitor_state.update_count == 0U) {
+        return 0U;
+    }
+
+    return ((uint32_t)(HAL_GetTick() -
+                       motor_position_monitor_state.last_update_ms) <=
+            maximum_age_ms) ? 1U : 0U;
 }

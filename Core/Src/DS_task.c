@@ -15,8 +15,17 @@ static uint32_t ds_task_last_display_ms;
 static uint8_t ds_task_q9_diagnostic_page;
 static int8_t ds_task_q9_next_move_direction;
 static int8_t ds_task_q9_last_move_direction;
-static uint32_t ds_task_q9_last_move_ms;
 static HAL_StatusTypeDef ds_task_q9_move_status;
+static uint8_t ds_task_q9_reference_ready;
+static uint8_t ds_task_q9_has_position_sample;
+static uint8_t ds_task_q9_move_in_progress;
+static uint8_t ds_task_q9_motion_observed;
+static uint8_t ds_task_q9_motion_fault;
+static uint8_t ds_task_q9_stable_updates;
+static uint32_t ds_task_q9_last_position_update;
+static uint32_t ds_task_q9_move_started_ms;
+static uint32_t ds_task_q9_endpoint_reached_ms;
+static int32_t ds_task_q9_last_position_sample;
 static uint8_t ds_task_q9_imu_zero_pending;
 static float ds_task_q9_imu_zero_x;
 static float ds_task_q9_imu_zero_y;
@@ -72,7 +81,14 @@ static void DS_Task_CaptureQuestion9ImuZero(void)
 static void DS_Task_UpdateQuestion9Angles(const DS_State *state)
 {
     if (ds_task_q9_imu_zero_pending != 0U) {
-        if (state->yaw_valid != 0U) {
+        /*
+         * Do not establish the pipe-angle origin while the mandatory
+         * power-on +240 move may still be running. The position monitor
+         * declares the Question 9 reference only after several stable
+         * samples, then the first valid IMU sample becomes the angle zero.
+         */
+        if (ds_task_q9_reference_ready != 0U &&
+            state->yaw_valid != 0U) {
             DS_Task_CaptureQuestion9ImuZero();
         }
         return;
@@ -186,9 +202,9 @@ static void DS_Task_ShowQuestion1(void)
 static void DS_Task_ShowQuestion2(void)
 {
     OLED_Clear();
-    OLED_ShowString(1U, 1U, "Q2 CENTER RX:X R");
+    OLED_ShowString(1U, 1U, "Q2 RX:X P:X S:X");
     OLED_ShowString(2U, 1U, "E:+000.0 V:+000");
-    OLED_ShowString(3U, 1U, "OUT:+000 ST:000");
+    OLED_ShowString(3U, 1U, "M:+000 A:+000.0");
     OLED_ShowString(4U, 1U, "TIME:0000.0s");
 }
 
@@ -241,7 +257,11 @@ static void DS_Task_UpdateQuestion9Values(void)
     DS_Task_ShowSignedFixedOne(2U, 2U, ds_task_q9_angle_x);
     DS_Task_ShowSignedFixedOne(2U, 10U, ds_task_q9_angle_y);
     DS_Task_ShowSignedFixedOne(3U, 2U, ds_task_q9_angle_z);
-    OLED_ShowChar(3U, 13U, (state->yaw_valid != 0U) ? 'V' : 'X');
+    OLED_ShowChar(
+        3U,
+        13U,
+        (state->yaw_valid != 0U &&
+         ds_task_q9_imu_zero_pending == 0U) ? 'V' : 'X');
 
     OLED_ShowString(
         4U,
@@ -279,7 +299,9 @@ static void DS_Task_UpdateQuestion9Telemetry(void)
     snapshot.angle_x_deg = ds_task_q9_angle_x;
     snapshot.angle_y_deg = ds_task_q9_angle_y;
     snapshot.angle_z_deg = ds_task_q9_angle_z;
-    snapshot.imu_valid = state->yaw_valid;
+    snapshot.imu_valid =
+        (state->yaw_valid != 0U &&
+         ds_task_q9_imu_zero_pending == 0U) ? 1U : 0U;
     snapshot.position_valid =
         motor_position_monitor_state.valid;
     snapshot.position_status =
@@ -480,29 +502,208 @@ static void DS_Task_StartQuestion9(void)
                               DS_TASK_DISPLAY_PERIOD_MS;
     ds_task_q9_next_move_direction = 1;
     ds_task_q9_last_move_direction = 0;
-    ds_task_q9_last_move_ms =
-        ds_task.start_ms - DS_TASK_Q9_MOVE_PERIOD_MS;
     ds_task_q9_move_status = HAL_BUSY;
-    DS_Task_CaptureQuestion9ImuZero();
+    ds_task_q9_reference_ready = 0U;
+    ds_task_q9_has_position_sample = 0U;
+    ds_task_q9_move_in_progress = 0U;
+    ds_task_q9_motion_observed = 0U;
+    ds_task_q9_motion_fault = 0U;
+    ds_task_q9_stable_updates = 0U;
+    ds_task_q9_last_position_update = 0U;
+    ds_task_q9_move_started_ms = 0U;
+    ds_task_q9_endpoint_reached_ms = ds_task.start_ms;
+    ds_task_q9_last_position_sample = 0;
+    ds_task_q9_imu_zero_pending = 1U;
+    ds_task_q9_angle_x = 0.0f;
+    ds_task_q9_angle_y = 0.0f;
+    ds_task_q9_angle_z = 0.0f;
 
     MotorPositionMonitor_Start();
     Question9Telemetry_Start();
     DS_Task_ShowQuestion9();
 }
 
+static int32_t DS_Task_GetQuestion9PulseMagnitude(int32_t pulses)
+{
+    int64_t magnitude = pulses;
+
+    if (magnitude < 0) {
+        magnitude = -magnitude;
+    }
+    if (magnitude > 0x7FFFFFFFLL) {
+        magnitude = 0x7FFFFFFFLL;
+    }
+
+    return (int32_t)magnitude;
+}
+
+static int32_t DS_Task_GetQuestion9SpanPulses(void)
+{
+    int64_t upper = DS_Task_GetQuestion9PulseMagnitude(
+        DS_TASK_Q9_UPPER_PULSES);
+    int64_t lower = DS_Task_GetQuestion9PulseMagnitude(
+        DS_TASK_Q9_LOWER_PULSES);
+    int64_t span = upper + lower;
+
+    if (span > 0x7FFFFFFFLL) {
+        span = 0x7FFFFFFFLL;
+    }
+
+    return (int32_t)span;
+}
+
+static uint32_t DS_Task_GetQuestion9PositionDelta(int32_t current,
+                                                  int32_t previous)
+{
+    int64_t delta = (int64_t)current - (int64_t)previous;
+
+    if (delta < 0) {
+        delta = -delta;
+    }
+    if (delta > 0xFFFFFFFFLL) {
+        delta = 0xFFFFFFFFLL;
+    }
+
+    return (uint32_t)delta;
+}
+
+static void DS_Task_SetQuestion9MotionFault(HAL_StatusTypeDef status)
+{
+    DS_BalanceCancelPositionRequest();
+    (void)DS_BalanceStop();
+    ds_task_q9_move_status = status;
+    ds_task_q9_motion_fault = 1U;
+    ds_task_q9_move_in_progress = 0U;
+}
+
 static void DS_Task_UpdateQuestion9Motion(uint32_t now)
 {
+    uint32_t position_update;
+    uint32_t position_delta;
     int32_t pulses;
+    int32_t position;
+    uint8_t required_stable_updates;
     HAL_StatusTypeDef status;
 
-    if ((uint32_t)(now - ds_task_q9_last_move_ms) <
-        DS_TASK_Q9_MOVE_PERIOD_MS) {
+    if (ds_task_q9_motion_fault != 0U) {
         return;
     }
 
-    pulses = (ds_task_q9_next_move_direction > 0) ?
-             DS_TASK_Q9_MOVE_PULSES :
-             -DS_TASK_Q9_MOVE_PULSES;
+    if (ds_task_q9_move_in_progress != 0U &&
+        (uint32_t)(now - ds_task_q9_move_started_ms) >=
+            DS_TASK_Q9_MOVE_TIMEOUT_MS) {
+        DS_Task_SetQuestion9MotionFault(HAL_TIMEOUT);
+        return;
+    }
+
+    if (MotorPositionMonitor_IsFresh(
+            DS_TASK_Q9_POSITION_FRESH_MS) == 0U) {
+        return;
+    }
+
+    position_update = motor_position_monitor_state.update_count;
+    if (position_update != ds_task_q9_last_position_update) {
+        position = motor_position_monitor_state.position;
+        ds_task_q9_last_position_update = position_update;
+
+        if (ds_task_q9_has_position_sample == 0U) {
+            ds_task_q9_has_position_sample = 1U;
+            ds_task_q9_last_position_sample = position;
+            return;
+        }
+
+        position_delta = DS_Task_GetQuestion9PositionDelta(
+            position,
+            ds_task_q9_last_position_sample);
+        ds_task_q9_last_position_sample = position;
+        required_stable_updates =
+            (DS_TASK_Q9_STABLE_UPDATES == 0U) ?
+            1U :
+            DS_TASK_Q9_STABLE_UPDATES;
+
+        if (ds_task_q9_reference_ready == 0U) {
+            if (position_delta <=
+                (uint32_t)DS_TASK_Q9_STABLE_DELTA) {
+                if (ds_task_q9_stable_updates < UINT8_MAX) {
+                    ds_task_q9_stable_updates++;
+                }
+            } else {
+                ds_task_q9_stable_updates = 0U;
+            }
+
+            if (ds_task_q9_stable_updates <
+                required_stable_updates) {
+                return;
+            }
+
+            /*
+             * The power-on +240 move and all residual motion are now stopped.
+             * This stable position is the Question 9 interval reference.
+             */
+            ds_task_q9_reference_ready = 1U;
+            ds_task_q9_stable_updates = 0U;
+            ds_task_q9_move_status = HAL_OK;
+            DS_Task_CaptureQuestion9ImuZero();
+            ds_task_q9_endpoint_reached_ms =
+                now - DS_TASK_Q9_ENDPOINT_DWELL_MS;
+        } else if (ds_task_q9_move_in_progress != 0U) {
+            if (position_delta >
+                (uint32_t)DS_TASK_Q9_STABLE_DELTA) {
+                ds_task_q9_motion_observed = 1U;
+                ds_task_q9_stable_updates = 0U;
+            } else if (ds_task_q9_motion_observed != 0U &&
+                       (uint32_t)(
+                           now - ds_task_q9_move_started_ms) >=
+                           DS_TASK_Q9_MIN_MOVE_MS) {
+                if (ds_task_q9_stable_updates < UINT8_MAX) {
+                    ds_task_q9_stable_updates++;
+                }
+            }
+
+            if (ds_task_q9_motion_observed == 0U ||
+                ds_task_q9_stable_updates <
+                    required_stable_updates) {
+                return;
+            }
+
+            ds_task_q9_move_in_progress = 0U;
+            ds_task_q9_stable_updates = 0U;
+            ds_task_q9_endpoint_reached_ms = now;
+            return;
+        }
+    }
+
+    if (ds_task_q9_reference_ready == 0U ||
+        ds_task_q9_move_in_progress != 0U ||
+        (uint32_t)(now - ds_task_q9_endpoint_reached_ms) <
+            DS_TASK_Q9_ENDPOINT_DWELL_MS) {
+        return;
+    }
+
+    if (ds_task_q9_next_move_direction > 0) {
+        /*
+         * The first move starts at the Question 9 reference position and
+         * reaches the upper endpoint. Later positive moves cross the complete
+         * lower-to-upper span, so unequal endpoint amplitudes cannot drift.
+         */
+        pulses = (ds_task_q9_last_move_direction == 0) ?
+                 DS_Task_GetQuestion9PulseMagnitude(
+                     DS_TASK_Q9_UPPER_PULSES) :
+                 DS_Task_GetQuestion9SpanPulses();
+    } else {
+        pulses = -DS_Task_GetQuestion9SpanPulses();
+    }
+
+    if (pulses == 0) {
+        ds_task_q9_move_status = HAL_OK;
+        ds_task_q9_last_move_direction =
+            ds_task_q9_next_move_direction;
+        ds_task_q9_next_move_direction =
+            (int8_t)-ds_task_q9_next_move_direction;
+        ds_task_q9_endpoint_reached_ms = now;
+        return;
+    }
+
     status = DS_BalanceMoveRelative(
         pulses,
         DS_TASK_Q9_MOVE_SPEED,
@@ -512,14 +713,19 @@ static void DS_Task_UpdateQuestion9Motion(uint32_t now)
     if (status == HAL_BUSY) {
         return;
     }
-
-    ds_task_q9_last_move_ms = now;
-    if (status == HAL_OK) {
-        ds_task_q9_last_move_direction =
-            ds_task_q9_next_move_direction;
-        ds_task_q9_next_move_direction =
-            (int8_t)-ds_task_q9_next_move_direction;
+    if (status != HAL_OK) {
+        DS_Task_SetQuestion9MotionFault(status);
+        return;
     }
+
+    ds_task_q9_last_move_direction =
+        ds_task_q9_next_move_direction;
+    ds_task_q9_next_move_direction =
+        (int8_t)-ds_task_q9_next_move_direction;
+    ds_task_q9_move_in_progress = 1U;
+    ds_task_q9_motion_observed = 0U;
+    ds_task_q9_stable_updates = 0U;
+    ds_task_q9_move_started_ms = now;
 }
 
 static void DS_Task_UpdateQuestion1Display(uint32_t now)
@@ -539,7 +745,6 @@ static void DS_Task_UpdateQuestion2Display(uint32_t now)
 {
     int32_t output;
     int32_t velocity;
-    uint32_t stable_count;
 
     if ((uint32_t)(now - ds_task_last_display_ms) <
         DS_TASK_DISPLAY_PERIOD_MS) {
@@ -559,22 +764,26 @@ static void DS_Task_UpdateQuestion2Display(uint32_t now)
     OLED_ShowSignedNum(2U, 12U, velocity, 3U);
     OLED_ShowChar(
         1U,
-        14U,
+        7U,
         (balance_control_state.vision_valid != 0U) ? 'V' : 'X');
+    OLED_ShowChar(
+        1U,
+        11U,
+        (balance_control_state.motor_position_valid != 0U) ? 'V' : 'X');
 
     output = DS_Task_Clamp(
         balance_control_state.motor_command,
         -999,
         999);
-    OLED_ShowSignedNum(3U, 5U, output, 3U);
-    stable_count = (balance_control_state.stable_count > 999U) ?
-                   999U :
-                   balance_control_state.stable_count;
-    OLED_ShowNum(3U, 13U, stable_count, 3U);
+    OLED_ShowSignedNum(3U, 3U, output, 3U);
+    DS_Task_ShowSignedFixedOne(
+        3U,
+        10U,
+        balance_control_state.rod_angle_deg);
     OLED_ShowChar(
         1U,
-        16U,
-        (BalanceControl_IsStable() != 0U) ? 'S' : 'R');
+        15U,
+        (BalanceControl_IsStable() != 0U) ? 'V' : 'X');
     DS_Task_ShowTimeOnLine(4U, ds_task.elapsed_ms);
 }
 
@@ -646,8 +855,17 @@ void DS_Task_Init(void)
     ds_task_q9_diagnostic_page = 0U;
     ds_task_q9_next_move_direction = 1;
     ds_task_q9_last_move_direction = 0;
-    ds_task_q9_last_move_ms = 0U;
     ds_task_q9_move_status = HAL_OK;
+    ds_task_q9_reference_ready = 0U;
+    ds_task_q9_has_position_sample = 0U;
+    ds_task_q9_move_in_progress = 0U;
+    ds_task_q9_motion_observed = 0U;
+    ds_task_q9_motion_fault = 0U;
+    ds_task_q9_stable_updates = 0U;
+    ds_task_q9_last_position_update = 0U;
+    ds_task_q9_move_started_ms = 0U;
+    ds_task_q9_endpoint_reached_ms = 0U;
+    ds_task_q9_last_position_sample = 0;
     ds_task_q9_imu_zero_pending = 1U;
     ds_task_q9_imu_zero_x = 0.0f;
     ds_task_q9_imu_zero_y = 0.0f;

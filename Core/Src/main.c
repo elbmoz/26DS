@@ -51,6 +51,10 @@ int main(void)
     Error_Handler();
   }
 
+  /*
+   * Required power-on pre-positioning: move balance motor 3 toward the
+   * approximate mechanical center before the task menu starts.
+   */
   (void)DS_BalanceMoveRelative(240, 50U, 10U);
 
   DS_Task_Init();
