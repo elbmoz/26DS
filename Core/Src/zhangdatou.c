@@ -247,6 +247,68 @@ HAL_StatusTypeDef Motor_Enable(uint8_t address,
     return Motor_Send(command, sizeof(command));
 }
 
+HAL_StatusTypeDef Motor_SetSpeedInputScale(
+    uint8_t address,
+    MotorSpeedInputScale scale,
+    MotorSettingStorage storage)
+{
+    uint8_t command[] = {
+        address,
+        0x4FU,
+        0x71U,
+        (uint8_t)storage,
+        (uint8_t)scale,
+        0x6BU
+    };
+    uint8_t response[4];
+    HAL_StatusTypeDef status;
+
+    if (motor_huart == NULL ||
+        Motor_AddressIsValid(address) == 0U ||
+        (scale != MOTOR_SPEED_INPUT_1_RPM &&
+         scale != MOTOR_SPEED_INPUT_0_1_RPM) ||
+        (storage != MOTOR_SETTING_VOLATILE &&
+         storage != MOTOR_SETTING_STORE) ||
+        motor_com_state != MOTOR_COM_IDLE) {
+        return HAL_ERROR;
+    }
+
+    /*
+     * 手册规定：
+     *   地址 4F 71 保存标志 S_Vel_IS 6B
+     * 成功应答：
+     *   地址 4F 02 6B
+     *
+     * 初始化阶段直接收走这条应答，避免它残留在 USART1 中干扰
+     * 后续 0x36 电机位置查询。
+     */
+    (void)HAL_UART_AbortReceive_IT(motor_huart);
+    __HAL_UART_CLEAR_OREFLAG(motor_huart);
+    __HAL_UART_FLUSH_DRREGISTER(motor_huart);
+
+    status = Motor_Send(command, sizeof(command));
+    if (status != HAL_OK) {
+        return status;
+    }
+
+    status = HAL_UART_Receive(motor_huart,
+                              response,
+                              sizeof(response),
+                              MOTOR_BLOCKING_TIMEOUT_MS);
+    if (status != HAL_OK) {
+        return status;
+    }
+
+    if (response[0] != address ||
+        response[1] != 0x4FU ||
+        response[2] != 0x02U ||
+        response[3] != 0x6BU) {
+        return HAL_ERROR;
+    }
+
+    return HAL_OK;
+}
+
 HAL_StatusTypeDef Motor_SpeedControl(uint8_t address,
                                     MotorDirection direction,
                                     uint16_t slope,

@@ -23,6 +23,8 @@ Preprocessor defines: `USE_HAL_DRIVER;STM32F407xx`
 ## Active Architecture
 
 1. `zhangdatou.c/.h` — Low-level address-based stepper protocol on USART1.
+   During `DS_Init()`, motor `0x03` receives a volatile `S_Vel_IS=Enable`
+   setting, so one speed-command unit is 0.1 RPM without writing driver flash.
 2. `HWT101.c/.h` — WIT 0x55-protocol yaw and angular-velocity receiver,
    retained under its original name and now used with JY61P on USART2.
 3. `serial.c/.h` — Retained line-based vision receiver on UART5. It accepts
@@ -58,8 +60,9 @@ Preprocessor defines: `USE_HAL_DRIVER;STM32F407xx`
     telemetry sender on USART6. It emits `Q9,...\n` frames containing motor
     position, zero-relative three-axis angles, validity and motion status.
 12. `DS_task.c/.h` — Question selection and start state machine. Question 1
-    runs line following, Question 2 runs center-return control, and Question 9
-    displays motor 3 position while moving between independently adjustable
+    runs line following, Question 2 runs center-return control and lets PB6
+    toggle its periodic OLED/I2C output without stopping control, and Question
+    9 displays motor 3 position while moving between independently adjustable
     upper/lower endpoints, without starting either controller or changing
     Question 2 settings.
 13. `PID.c/.h` — Retained generic PID library. Question 2 uses its own

@@ -83,6 +83,8 @@ static void DS_IR_Init(void)
 
 HAL_StatusTypeDef DS_Init(void)
 {
+    HAL_StatusTypeDef status;
+
     DS_IR_Init();
 
     ds_state.uptime_ms = 0U;
@@ -110,6 +112,19 @@ HAL_StatusTypeDef DS_Init(void)
     ds_1ms_pending = 0U;
 
     Motor_Init(&huart1);
+    /*
+     * 张大头 Emm_V5.0 的 S_Vel_IS=Enable 使速度命令值 1 对应
+     * 实际 0.1 RPM。这里只给 3 号平衡电机设置，并选择不写入驱动器
+     * Flash；因此每次上电都会明确配置一次，也不会反复磨损存储器。
+     */
+    status = Motor_SetSpeedInputScale(
+        DS_BALANCE_MOTOR_ADDR,
+        MOTOR_SPEED_INPUT_0_1_RPM,
+        MOTOR_SETTING_VOLATILE);
+    if (status != HAL_OK) {
+        return status;
+    }
+
     DS_MotorsEnable();
     DS_ChassisStop();
     DS_BalanceStop();

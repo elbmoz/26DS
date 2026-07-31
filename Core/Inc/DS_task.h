@@ -32,12 +32,20 @@ typedef enum
     DS_TASK_NOT_READY
 } DS_TaskState;
 
+/* 任务 2 的 OLED 输出状态；暂停后不再产生周期性 I2C 写入。 */
+typedef enum
+{
+    DS_TASK_Q2_OLED_PAUSED = 0,
+    DS_TASK_Q2_OLED_UPDATING
+} DS_TaskQuestion2OledState;
+
 typedef struct
 {
     volatile DS_TaskState state;
     volatile uint8_t selected_question;
     volatile uint8_t oled_ready;
     volatile uint8_t oled_address;
+    volatile DS_TaskQuestion2OledState question2_oled_state;
     volatile uint32_t start_ms;
     volatile uint32_t elapsed_ms;
 } DS_TaskContext;

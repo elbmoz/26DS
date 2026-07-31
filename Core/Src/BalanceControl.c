@@ -34,7 +34,7 @@ BalanceControlConfig balance_control_config = {
     .outer_kp_deg_per_px = 0.02f,       /* 位置 P：误差每 1 px 产生的角度。 */
     /* 首轮为 0；P/D 调稳后可从参考候选 0.03297 开始小步增加。 */
     .outer_ki_deg_per_px_s = 0.0f,      /* 位置 I：用于消除固定静差。 */
-    .outer_kd_deg_per_px_s = 0.05f,     /* 速度 D：使用 -Kd*球速抑制冲过中心。 */
+    .outer_kd_deg_per_px_s = 0.0f,     /* 速度 D：使用 -Kd*球速抑制冲过中心。 */
     .outer_integral_limit_px_s = 109.2f, /* 限制积分累积，防止积分饱和。 */
     /*
      * 当前值允许 ±5.5°目标管道角；最终不得超过拟合得到的
@@ -98,14 +98,14 @@ BalanceControlConfig balance_control_config = {
      * - motor_min_speed：克服静摩擦的最小速度；
      * - motor_speed_deadband：目标附近的停车死区。
      */
-    .angle_kp_speed_per_deg = 5.5f,     /* 角度误差每 1°产生的速度命令。 */
+    .angle_kp_speed_per_deg = 0.5f,     /* 角度误差每 1°产生的速度命令。 */
     .motor_speed_limit = 30.0f,         /* 最终速度命令绝对值不得超过 30。 */
-    .motor_speed_deadband = 0.0f,       /* 连续速度落入该死区时命令为 0。 */
-    .motor_min_speed = 0.0f,            /* 非零命令不足该值时向上补偿。 */
+    .motor_speed_deadband = 2.0f,       /* 连续速度落入该死区时命令为 0。 */
+    .motor_min_speed = 1.0f,            /* 最小非零命令 1，即实际 0.1 RPM。 */
     .motor_slew_per_update = 2.0f,      /* 每 20 ms 最多改变 2 个速度命令单位。 */
     /*
      * F6 驱动器加减速档。0 表示直接启停/换向；非零时数值越大加减速越快。
-     * 速度命令实际对应 1 RPM 还是 0.1 RPM，取决于驱动器 S_Vel_IS 设置。
+     * 3 号电机在 DS_Init() 中明确启用 S_Vel_IS，因此命令 1 = 0.1 RPM。
      */
     .motor_slope = 0U,
     /*
@@ -711,7 +711,10 @@ void BalanceControl_Update(void)
             balance_control_state.target_rod_angle_deg = 0.0f;
             balance_control_state.leveling = 1U;
         }
-
+				
+				//balance_control_state.target_rod_angle_deg = -2.0f;
+				
+				
         BalanceControl_UpdateInner(vision_frame,
                                    vision_last_rx_ms,
                                    ball_position,

@@ -194,18 +194,24 @@ motor_direction = -1
 | `rod_angle_per_motor_degree` | -0.36450137 | 拟合得到的电机角到管道 X 角带符号比例 |
 | `rod_angle_limit_deg` | 6.5 | 管道角软件保护范围，保留约 0.5°跟踪余量 |
 | `capture_motor_zero_on_start` | 1 | 首个有效位置作为临时零点 |
-| `angle_kp_speed_per_deg` | 9.2 | 角度内环 P |
+| `angle_kp_speed_per_deg` | 现场值 | 角度内环 P，以 `BalanceControl.c` 为准 |
 | `motor_speed_limit` | 30 | 首轮 RS485 最大速度命令，约 3 RPM |
-| `motor_speed_deadband` | 1 | 小于等于该值视为停止 |
-| `motor_min_speed` | 4 | 非零时的最小命令 |
-| `motor_slew_per_update` | 8 | 首轮每个控制周期最大速度变化 |
+| `motor_speed_deadband` | 现场值 | 小于等于该值视为停止，以 `BalanceControl.c` 为准 |
+| `motor_min_speed` | 1 | 最小非零命令；S_Vel_IS 启用后对应 0.1 RPM |
+| `motor_slew_per_update` | 现场值 | 每个控制周期最大速度变化，以 `BalanceControl.c` 为准 |
 | `motor_slope` | 0 | 电机驱动器速度模式斜率字段 |
 | `control_period_ms` | 20 ms | 串级控制周期 |
 | `motor_position_period_ms` | 20 ms | 题目 2 的 0x36 查询周期 |
 | `motor_position_timeout_ms` | 60 ms | 位置失效停机阈值 |
 
-`angle_kp_speed_per_deg=9.2` 仍只是参考工程响应的初始值；角度比例已经
-按实测传动关系更新，但角度内环 P、速度限幅和 slew 仍需实车逐步调试。
+`DS_Init()` 每次上电都会给 3 号电机发送不保存的 `S_Vel_IS=Enable`
+配置，因此速度和位置模式中的命令值 `1` 都对应实际 `0.1 RPM`，不会在每次
+上电时写驱动器 Flash。`motor_speed_deadband` 仍优先执行：只要死区大于等于
+1，命令值 1 就会被控制器置零；这是抑制零点抖动的策略，不代表驱动器不支持
+0.1 RPM。如需在任务 2 中实际发出命令值 1，应把死区调到小于 1。
+
+角度比例已经按实测传动关系更新，但角度内环 P、速度限幅、死区和 slew
+属于现场调试值，均以 `BalanceControl.c` 中的当前值为准。
 
 稳定判定使用 `stable_error_px=18.2`、`stable_velocity_px_s=25` 和
 `stable_frames=25`。计数单位是新的视觉帧，50 Hz 时约需连续 0.5 秒。
@@ -216,7 +222,7 @@ motor_direction = -1
 Q2 RX:V P:V S:X
 E:-027.0 V:+018
 M:+016 A:+001.2
-TIME:0000.0s
+TIME:0000.0s D:1
 ```
 
 - `RX:V/X`：视觉有效/无效。
@@ -225,6 +231,10 @@ TIME:0000.0s
 - `E`、`V`：球的位置误差和轴向速度。
 - `M`：最终有符号电机速度命令。
 - `A`：相对水平零点的实际杆角。
+- `D:1`：任务 2 OLED 正以 5 Hz 刷新。运行中按 PB6/K1 可切换到
+  `OLED REFRESH OFF` 页面；该页面只写入一次，随后停止全部任务 2 OLED/I2C
+  输出，而平衡控制与串口通信继续运行。再次按 PB6/K1 恢复刷新，PB7/K2
+  的停止功能不变。
 
 ## 首次标定和调试顺序
 

@@ -31,10 +31,28 @@ typedef enum
     SNF_ENABLE = 0x01
 } SNFMODE;
 
+/* 驱动器参数修改命令的掉电保存标志。 */
+typedef enum
+{
+    MOTOR_SETTING_VOLATILE = 0x00,
+    MOTOR_SETTING_STORE = 0x01
+} MotorSettingStorage;
+
+/* S_Vel_IS：通讯速度命令的实际分辨率。 */
+typedef enum
+{
+    MOTOR_SPEED_INPUT_1_RPM = 0x00,
+    MOTOR_SPEED_INPUT_0_1_RPM = 0x01
+} MotorSpeedInputScale;
+
 void Motor_Init(UART_HandleTypeDef *huart);
 HAL_StatusTypeDef Motor_Enable(uint8_t address,
                                MotorState state,
                                SNFMODE sync_mode);
+HAL_StatusTypeDef Motor_SetSpeedInputScale(
+    uint8_t address,
+    MotorSpeedInputScale scale,
+    MotorSettingStorage storage);
 HAL_StatusTypeDef Motor_SpeedControl(uint8_t address,
                                     MotorDirection direction,
                                     uint16_t slope,

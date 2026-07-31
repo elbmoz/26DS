@@ -205,7 +205,20 @@ static void DS_Task_ShowQuestion2(void)
     OLED_ShowString(1U, 1U, "Q2 RX:X P:X S:X");
     OLED_ShowString(2U, 1U, "E:+000.0 V:+000");
     OLED_ShowString(3U, 1U, "M:+000 A:+000.0");
-    OLED_ShowString(4U, 1U, "TIME:0000.0s");
+    OLED_ShowString(4U, 1U, "TIME:0000.0s D:1");
+}
+
+static void DS_Task_ShowQuestion2OledPaused(void)
+{
+    /*
+     * 这个页面只写入一次。文字会继续留在屏幕上，但此后任务 2
+     * 不再调用 OLED 接口，便于排除周期性 I2C 刷新对控制环的影响。
+     */
+    OLED_Clear();
+    OLED_ShowString(1U, 1U, "OLED REFRESH OFF");
+    OLED_ShowString(2U, 1U, "Q2 CONTROL RUN");
+    OLED_ShowString(3U, 1U, "K1:REFRESH ON");
+    OLED_ShowString(4U, 1U, "K2:STOP");
 }
 
 static void DS_Task_ShowMotorPositionAngle(float angle_deg)
@@ -473,6 +486,7 @@ static void DS_Task_FinishQuestion2(uint32_t now)
 static void DS_Task_StartQuestion2(void)
 {
     ds_task.state = DS_TASK_RUNNING_Q2;
+    ds_task.question2_oled_state = DS_TASK_Q2_OLED_UPDATING;
     ds_task.start_ms = HAL_GetTick();
     ds_task.elapsed_ms = 0U;
     ds_task_last_display_ms = ds_task.start_ms -
@@ -481,6 +495,23 @@ static void DS_Task_StartQuestion2(void)
     BalanceControl_Start(0.0f);
     BallVision_StartStream();
     DS_Task_ShowQuestion2();
+}
+
+static void DS_Task_ToggleQuestion2Oled(uint32_t now)
+{
+    switch (ds_task.question2_oled_state) {
+    case DS_TASK_Q2_OLED_UPDATING:
+        ds_task.question2_oled_state = DS_TASK_Q2_OLED_PAUSED;
+        DS_Task_ShowQuestion2OledPaused();
+        break;
+
+    case DS_TASK_Q2_OLED_PAUSED:
+    default:
+        ds_task.question2_oled_state = DS_TASK_Q2_OLED_UPDATING;
+        ds_task_last_display_ms = now;
+        DS_Task_ShowQuestion2();
+        break;
+    }
 }
 
 static void DS_Task_FinishQuestion9(void)
@@ -747,6 +778,11 @@ static void DS_Task_UpdateQuestion2Display(uint32_t now)
     int32_t output;
     int32_t velocity;
 
+    if (ds_task.question2_oled_state !=
+        DS_TASK_Q2_OLED_UPDATING) {
+        return;
+    }
+
     if ((uint32_t)(now - ds_task_last_display_ms) <
         DS_TASK_DISPLAY_PERIOD_MS) {
         return;
@@ -850,6 +886,7 @@ void DS_Task_Init(void)
         (oled_status == HAL_OK && OLED_IsConnected() != 0U) ? 1U : 0U;
     ds_task.oled_address =
         (ds_task.oled_ready != 0U) ? OLED_GetAddress() : 0U;
+    ds_task.question2_oled_state = DS_TASK_Q2_OLED_UPDATING;
     ds_task.start_ms = 0U;
     ds_task.elapsed_ms = 0U;
     ds_task_last_display_ms = 0U;
@@ -934,6 +971,9 @@ void DS_Task_Run(void)
         }
 
         BalanceControl_Update();
+        if (key1_clicked != 0U) {
+            DS_Task_ToggleQuestion2Oled(now);
+        }
         DS_Task_UpdateQuestion2Display(now);
         break;
 
