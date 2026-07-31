@@ -23,8 +23,10 @@ Preprocessor defines: `USE_HAL_DRIVER;STM32F407xx`
 ## Active Architecture
 
 1. `zhangdatou.c/.h` — Low-level address-based stepper protocol on USART1.
-   During `DS_Init()`, motor `0x03` receives a volatile `S_Vel_IS=Enable`
-   setting, so one speed-command unit is 0.1 RPM without writing driver flash.
+   During `DS_Init()`, motor `0x03` is sent a volatile `S_Vel_IS=Enable`
+   setting, so one speed-command unit is 0.1 RPM after a successful reply,
+   without writing driver flash. A missing reply is recorded but must never
+   block the mandatory power-on `+240` move or task startup.
 2. `HWT101.c/.h` — WIT 0x55-protocol yaw and angular-velocity receiver,
    retained under its original name and now used with JY61P on USART2.
 3. `serial.c/.h` — Retained line-based vision receiver on UART5. It accepts
@@ -59,15 +61,21 @@ Preprocessor defines: `USE_HAL_DRIVER;STM32F407xx`
 11. `Question9Telemetry.c/.h` — Isolated 50 Hz non-blocking Question 9
     telemetry sender on USART6. It emits `Q9,...\n` frames containing motor
     position, zero-relative three-axis angles, validity and motion status.
-12. `DS_task.c/.h` — Question selection and start state machine. Question 1
+12. `Task3Motion.c/.h` — Question 3 non-blocking, open-loop timed sequence for
+    balance motor `0x03`. Its direction/speed/time table is intentionally centralized
+    at the top of the source file for on-car tuning; runtime is hard-limited to
+    5 seconds, and OLED writes are suppressed while the sequence is running so
+    blocking I2C traffic cannot delay a timed reversal.
+13. `DS_task.c/.h` — Question selection and start state machine. Question 1
     runs line following, Question 2 runs center-return control and lets PB6
     toggle its periodic OLED/I2C output without stopping control, and Question
-    9 displays motor 3 position while moving between independently adjustable
+    3 runs the fixed timed motor sequence. Question 9 displays motor 3 position
+    while moving between independently adjustable
     upper/lower endpoints, without starting either controller or changing
     Question 2 settings.
-13. `PID.c/.h` — Retained generic PID library. Question 2 uses its own
+14. `PID.c/.h` — Retained generic PID library. Question 2 uses its own
     dt-aware, gain-scheduled cascaded law in `BalanceControl`.
-14. `main.c` — Initializes the active peripherals and repeatedly calls
+15. `main.c` — Initializes the active peripherals and repeatedly calls
     `DS_Run()` and `DS_Task_Run()`.
 
 TIM2 provides a 1 ms tick through `DS_1msTickFromISR()`. UART RX callbacks

@@ -7,6 +7,7 @@
 #include "MotorPositionMonitor.h"
 #include "OLED.h"
 #include "Question9Telemetry.h"
+#include "Task3Motion.h"
 #include "button.h"
 
 DS_TaskContext ds_task;
@@ -419,6 +420,32 @@ static void DS_Task_ShowQuestion2Finished(void)
     OLED_ShowString(4U, 1U, "K2:MENU");
 }
 
+static void DS_Task_ShowQuestion3Finished(void)
+{
+    OLED_Clear();
+    if (task3_motion_state.last_status == HAL_TIMEOUT) {
+        OLED_ShowString(1U, 1U, "Q3 TIME LIMIT");
+    } else if (Task3Motion_HasFault() != 0U) {
+        OLED_ShowString(1U, 1U, "Q3 MOTOR FAULT");
+    } else if (Task3Motion_IsComplete() != 0U) {
+        OLED_ShowString(1U, 1U, "Q3 SEQUENCE DONE");
+    } else {
+        OLED_ShowString(1U, 1U, "Q3 STOPPED");
+    }
+    OLED_ShowString(2U, 1U, "TIME:0000.0s");
+    DS_Task_ShowTime(ds_task.elapsed_ms);
+    OLED_ShowString(3U, 1U, "LAST STEP:00/00");
+    OLED_ShowNum(3U,
+                 11U,
+                 (uint32_t)task3_motion_state.step_index + 1U,
+                 2U);
+    OLED_ShowNum(3U,
+                 14U,
+                 Task3Motion_GetStepCount(),
+                 2U);
+    OLED_ShowString(4U, 1U, "K2:MENU");
+}
+
 static void DS_Task_ShowQuestion9Finished(void)
 {
     OLED_Clear();
@@ -512,6 +539,32 @@ static void DS_Task_ToggleQuestion2Oled(uint32_t now)
         DS_Task_ShowQuestion2();
         break;
     }
+}
+
+static void DS_Task_FinishQuestion3(uint32_t now)
+{
+    if (task3_motion_state.active != 0U) {
+        Task3Motion_Stop();
+    }
+    ds_task.elapsed_ms = now - ds_task.start_ms;
+    ds_task.state = DS_TASK_FINISHED;
+    DS_Task_ShowQuestion3Finished();
+}
+
+static void DS_Task_StartQuestion3(void)
+{
+    ds_task.state = DS_TASK_RUNNING_Q3;
+    ds_task.start_ms = HAL_GetTick();
+    ds_task.elapsed_ms = 0U;
+    ds_task_last_display_ms = ds_task.start_ms -
+                              DS_TASK_DISPLAY_PERIOD_MS;
+
+    /*
+     * 任务运行期间故意不刷新 OLED。当前 OLED 接口是阻塞式 I2C，连续
+     * 写屏会推迟 0.x 秒动作的换向时刻。保留菜单上的 Q3 作为运行提示，
+     * 完成或手动停止后再一次性显示结果。
+     */
+    Task3Motion_Start();
 }
 
 static void DS_Task_FinishQuestion9(void)
@@ -850,9 +903,11 @@ static void DS_Task_UpdatePassiveImuDisplay(uint32_t now)
 {
     if (ds_task.state == DS_TASK_RUNNING_Q1 ||
         ds_task.state == DS_TASK_RUNNING_Q2 ||
+        ds_task.state == DS_TASK_RUNNING_Q3 ||
         ds_task.state == DS_TASK_RUNNING_Q9 ||
         (ds_task.state == DS_TASK_FINISHED &&
          (ds_task.selected_question == 2U ||
+          ds_task.selected_question == 3U ||
           ds_task.selected_question == 9U)) ||
         (uint32_t)(now - ds_task_last_display_ms) <
         DS_TASK_DISPLAY_PERIOD_MS) {
@@ -878,6 +933,7 @@ void DS_Task_Init(void)
     }
     LineFollow_Init();
     BalanceControl_Init();
+    Task3Motion_Init();
     MotorPositionMonitor_Init();
 
     ds_task.state = DS_TASK_MENU;
@@ -940,6 +996,8 @@ void DS_Task_Run(void)
                 DS_Task_StartQuestion1();
             } else if (ds_task.selected_question == 2U) {
                 DS_Task_StartQuestion2();
+            } else if (ds_task.selected_question == 3U) {
+                DS_Task_StartQuestion3();
             } else if (ds_task.selected_question == 9U) {
                 DS_Task_StartQuestion9();
             } else {
@@ -975,6 +1033,22 @@ void DS_Task_Run(void)
             DS_Task_ToggleQuestion2Oled(now);
         }
         DS_Task_UpdateQuestion2Display(now);
+        break;
+
+    case DS_TASK_RUNNING_Q3:
+        ds_task.elapsed_ms = now - ds_task.start_ms;
+
+        if (key2_clicked != 0U) {
+            DS_Task_FinishQuestion3(now);
+            break;
+        }
+
+        Task3Motion_Update();
+        if (Task3Motion_IsComplete() != 0U ||
+            Task3Motion_HasFault() != 0U) {
+            DS_Task_FinishQuestion3(now);
+            break;
+        }
         break;
 
     case DS_TASK_RUNNING_Q9:
@@ -1014,6 +1088,8 @@ void DS_Task_Stop(void)
     if (ds_task.state == DS_TASK_RUNNING_Q2) {
         BalanceControl_Stop();
         BallVision_StopStream();
+    } else if (ds_task.state == DS_TASK_RUNNING_Q3) {
+        Task3Motion_Stop();
     } else if (ds_task.state == DS_TASK_RUNNING_Q1) {
         LineFollow_Stop();
     } else if (ds_task.state == DS_TASK_RUNNING_Q9) {
@@ -1023,6 +1099,7 @@ void DS_Task_Stop(void)
     }
     if (ds_task.state == DS_TASK_RUNNING_Q1 ||
         ds_task.state == DS_TASK_RUNNING_Q2 ||
+        ds_task.state == DS_TASK_RUNNING_Q3 ||
         ds_task.state == DS_TASK_RUNNING_Q9) {
         ds_task.elapsed_ms = HAL_GetTick() - ds_task.start_ms;
     }

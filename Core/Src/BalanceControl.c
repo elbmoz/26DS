@@ -31,23 +31,23 @@ BalanceControlConfig balance_control_config = {
      * - 电机被速度噪声带着抖：减小 Kd；
      * - P/D 稳定后仍有固定静差，最后才逐步增加 Ki。
      */
-    .outer_kp_deg_per_px = 0.02f,       /* 位置 P：误差每 1 px 产生的角度。 */
+    .outer_kp_deg_per_px = 0.8044f,       /* 位置 P：误差每 1 px 产生的角度。 */
     /* 首轮为 0；P/D 调稳后可从参考候选 0.03297 开始小步增加。 */
     .outer_ki_deg_per_px_s = 0.0f,      /* 位置 I：用于消除固定静差。 */
-    .outer_kd_deg_per_px_s = 0.0f,     /* 速度 D：使用 -Kd*球速抑制冲过中心。 */
+    .outer_kd_deg_per_px_s = 0.1389f,     /* 速度 D：使用 -Kd*球速抑制冲过中心。 */
     .outer_integral_limit_px_s = 109.2f, /* 限制积分累积，防止积分饱和。 */
     /*
      * 当前值允许 ±5.5°目标管道角；最终不得超过拟合得到的
      * ±6.0°公共安全范围。首次排查方向时应临时调低到约 1～2°。
      */
-    .outer_angle_limit_deg = 5.5f,
+    .outer_angle_limit_deg = 10.5f,
 
     /* 近中心增益调度：内外环基础调通前先不要修改这一组。 */
-    .hold_band_px = 18.2f,              /* 误差进入 ±18.2 px 后使用柔化参数。 */
-    .fine_band_px = 3.64f,              /* 误差进入 ±3.64 px 后考虑回水平。 */
+    .hold_band_px = 25.2f,              /* 误差进入 ±18.2 px 后使用柔化参数。 */
+    .fine_band_px = 5.64f,              /* 误差进入 ±3.64 px 后考虑回水平。 */
     .fine_velocity_px_s = 18.2f,        /* 精细区内低于此球速才强制回水平。 */
-    .soft_kp_scale = 0.55f,             /* 柔化区把基础 Kp 乘 0.55。 */
-    .soft_kd_scale = 0.75f,             /* 柔化区把基础 Kd 乘 0.75。 */
+    .soft_kp_scale = 0.75f,             /* 柔化区把基础 Kp 乘 0.55。 */
+    .soft_kd_scale = 0.55f,             /* 柔化区把基础 Kd 乘 0.75。 */
     .soft_angle_limit_scale = 0.65f,    /* 柔化区把目标角限幅乘 0.65。 */
     /* 首轮为 0；外环稳定后可从参考候选 0.10989 以下逐步增加。 */
     .soft_ki_deg_per_px_s = 0.0f,       /* 柔化区单独使用的 Ki，不是基础 Ki 倍率。 */
@@ -98,14 +98,14 @@ BalanceControlConfig balance_control_config = {
      * - motor_min_speed：克服静摩擦的最小速度；
      * - motor_speed_deadband：目标附近的停车死区。
      */
-    .angle_kp_speed_per_deg = 0.5f,     /* 角度误差每 1°产生的速度命令。 */
+    .angle_kp_speed_per_deg = 1.5f,     /* 角度误差每 1°产生的速度命令。 */
     .motor_speed_limit = 30.0f,         /* 最终速度命令绝对值不得超过 30。 */
     .motor_speed_deadband = 2.0f,       /* 连续速度落入该死区时命令为 0。 */
-    .motor_min_speed = 1.0f,            /* 最小非零命令 1，即实际 0.1 RPM。 */
+    .motor_min_speed = 1.0f,            /* 最小非零命令 1；缩放成功时为 0.1 RPM。 */
     .motor_slew_per_update = 2.0f,      /* 每 20 ms 最多改变 2 个速度命令单位。 */
     /*
      * F6 驱动器加减速档。0 表示直接启停/换向；非零时数值越大加减速越快。
-     * 3 号电机在 DS_Init() 中明确启用 S_Vel_IS，因此命令 1 = 0.1 RPM。
+     * DS_Init() 会尝试启用 3 号电机 S_Vel_IS；成功时命令 1 = 0.1 RPM。
      */
     .motor_slope = 0U,
     /*
@@ -121,9 +121,9 @@ BalanceControlConfig balance_control_config = {
     .motor_position_period_ms = 20U,    /* 0x36 电机位置查询周期：50 Hz。 */
     .motor_position_timeout_ms = 60U,   /* 连续 60 ms 没有新位置就停机。 */
 
-    .stable_error_px = 18.2f,           /* 稳定时允许的位置误差：约 1 cm。 */
+    .stable_error_px = 19.2f,           /* 稳定时允许的位置误差：约 1 cm。 */
     .stable_velocity_px_s = 25.0f,      /* 稳定时允许的最大球速。 */
-    .stable_frames = 25U,               /* 连续 25 个视觉帧满足条件才判稳定。 */
+    .stable_frames = 10U,               /* 连续 25 个视觉帧满足条件才判稳定。 */
 
     .pixels_per_cm = 18.2f,             /* 当前视觉标定：每厘米 18.2 px。 */
     .positive_5cm_target = 91.0f,       /* 后续阶段预留的 +5 cm 目标。 */

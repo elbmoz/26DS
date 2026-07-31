@@ -425,6 +425,16 @@
               <FilePath>..\Core\Inc\DS_task.h</FilePath>
             </File>
             <File>
+              <FileName>Task3Motion.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\Task3Motion.c</FilePath>
+            </File>
+            <File>
+              <FileName>Task3Motion.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Core\Inc\Task3Motion.h</FilePath>
+            </File>
+            <File>
               <FileName>MotorPositionMonitor.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\Core\Src\MotorPositionMonitor.c</FilePath>

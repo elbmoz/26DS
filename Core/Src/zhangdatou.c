@@ -296,6 +296,10 @@ HAL_StatusTypeDef Motor_SetSpeedInputScale(
                               sizeof(response),
                               MOTOR_BLOCKING_TIMEOUT_MS);
     if (status != HAL_OK) {
+        /* 确保一次配置应答超时不会占住 USART1，后续电机命令仍可执行。 */
+        (void)HAL_UART_AbortReceive(motor_huart);
+        __HAL_UART_CLEAR_OREFLAG(motor_huart);
+        __HAL_UART_FLUSH_DRREGISTER(motor_huart);
         return status;
     }
 

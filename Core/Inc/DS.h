@@ -78,6 +78,9 @@ typedef struct
     volatile uint32_t ball_vision_frame_count;
     volatile uint32_t ball_vision_last_rx_ms;
 
+    /* 3 号电机 S_Vel_IS 上电配置结果；失败不会阻断整机启动。 */
+    volatile HAL_StatusTypeDef balance_speed_scale_status;
+
     volatile float roll_deg;
     volatile float pitch_deg;
     volatile float yaw_deg;
