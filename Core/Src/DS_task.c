@@ -358,7 +358,6 @@ void DS_Task_Run(void)
         break;
 
     case DS_TASK_RUNNING_Q2:
-        BalanceControl_Update();
         ds_task.elapsed_ms = now - ds_task.start_ms;
 
         if (key2_clicked != 0U) {
@@ -366,6 +365,7 @@ void DS_Task_Run(void)
             break;
         }
 
+        BalanceControl_Update();
         DS_Task_UpdateQuestion2Display(now);
         break;
 

@@ -15,14 +15,36 @@ extern "C" {
  *
  * The receiver is armed only by BallVision_StartStream(). The STM32 sends
  * "c2" to start MaixCAM output and "ok" when Question 2 stops.
+ *
+ * After each balance-motor command attempt, STM32 sends one non-blocking
+ * feedback line to MaixCAM:
+ *   F,seq,mcu_ms,vision_frame,vision_age_ms,position_x10,velocity_x10,
+ *     error_x10,p_x100,i_x100,d_x100,motor_command,motor_status\n
+ *
+ * Missing sequence numbers mean feedback was dropped because USART6 was
+ * still transmitting. Motor control is never delayed to wait for logging.
  */
 extern volatile uint32_t ball_vision_parse_error_count;
 extern volatile uint8_t ball_vision_stream_active;
+extern volatile uint32_t ball_vision_feedback_attempt_count;
+extern volatile uint32_t ball_vision_feedback_sent_count;
+extern volatile uint32_t ball_vision_feedback_drop_count;
 
 void BallVision_Init(UART_HandleTypeDef *huart);
 void BallVision_StartStream(void);
 void BallVision_StopStream(void);
+HAL_StatusTypeDef BallVision_SendFeedback(uint32_t vision_frame,
+                                          uint32_t vision_age_ms,
+                                          float position,
+                                          float velocity,
+                                          float control_error,
+                                          float p_term,
+                                          float i_term,
+                                          float d_term,
+                                          int32_t motor_command,
+                                          HAL_StatusTypeDef motor_status);
 void BallVision_UART_RxCpltCallback(UART_HandleTypeDef *huart);
+void BallVision_UART_TxCpltCallback(UART_HandleTypeDef *huart);
 void BallVision_UART_ErrorCallback(UART_HandleTypeDef *huart);
 
 #ifdef __cplusplus

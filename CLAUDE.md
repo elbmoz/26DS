@@ -27,8 +27,10 @@ Preprocessor defines: `USE_HAL_DRIVER;STM32F407xx`
    retained under its original name and now used with JY61P on USART2.
 3. `serial.c/.h` — Retained line-based vision receiver on UART5. It accepts
    `x_error,y_error\n` and `none\n`.
-4. `BallVision.c/.h` — Question 2 receiver on USART6. After `c2` start it
-   accepts `B,error_px,velocity_px_s\n`, or `none\n`; `ok` stops the stream.
+4. `BallVision.c/.h` — Full-duplex Question 2 link on USART6. After `c2`
+   start it accepts `B,error_px,velocity_px_s\n`, or `none\n`; after each
+   balance-motor command it returns a non-blocking `F,...\n` control-feedback
+   frame to MaixCAM, and `ok` stops the stream.
 5. `DS.c/.h` — Board mapping and the application-facing hardware facade. It owns
    motor address/direction mapping, reads all infrared inputs, aggregates vision
    and IMU data, and exposes chassis/balance-frame commands.
@@ -47,8 +49,9 @@ Preprocessor defines: `USE_HAL_DRIVER;STM32F407xx`
 12. `main.c` — Initializes the active peripherals and repeatedly calls
     `DS_Run()` and `DS_Task_Run()`.
 
-TIM2 provides a 1 ms tick through `DS_1msTickFromISR()`. UART callbacks dispatch
-to the motor, vision, and IMU handlers; each handler checks its UART instance.
+TIM2 provides a 1 ms tick through `DS_1msTickFromISR()`. UART RX callbacks
+dispatch to the motor, vision, and IMU handlers; the UART TX callback releases
+the USART6 feedback buffer. Each handler checks its UART instance.
 
 ## Hardware Map
 

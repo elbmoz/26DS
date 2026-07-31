@@ -1,5 +1,6 @@
 #include "BalanceControl.h"
 
+#include "BallVision.h"
 #include "DS.h"
 
 /*
@@ -9,18 +10,18 @@
  * motor_direction is -1 because PID_Control uses target - feedback.
  */
 BalanceControlConfig balance_control_config = {
-    .kp = 0.55f,
-    .ki = 0.001f,
-    .kd = 0.08f,
+    .kp = 0.012f,
+    .ki = 0.0f,
+    .kd = 0.011f,
     .integral_limit = 3000.0f,
     /*
      * Keep closed-loop motor output disabled while the bidirectional UART
      * link is brought up. Set a tested positive limit before PID trials.
      */
-    .output_limit = 0.0f,
-    .pid_deadband = 3.0f,
-    .velocity_deadband = 12.0f,
-    .control_period_ms = 20U,
+    .output_limit = 180.0f,
+    .pid_deadband = 1.0f,
+    .velocity_deadband = 5.0f,
+    .control_period_ms = 10U,
     .motor_slope = 0U,
     .motor_direction = -1,
     .stable_error = 18.0f,
@@ -36,6 +37,32 @@ PID_Cycle balance_position_pid;
 
 static uint32_t balance_control_last_update_ms;
 static uint8_t balance_control_had_valid_vision;
+
+static void BalanceControl_SendMotorFeedback(uint32_t vision_frame,
+                                             uint32_t vision_last_rx_ms,
+                                             float ball_position,
+                                             float ball_velocity,
+                                             float control_error,
+                                             float p_term,
+                                             float i_term,
+                                             float d_term,
+                                             int32_t motor_command,
+                                             HAL_StatusTypeDef motor_status)
+{
+    uint32_t now = HAL_GetTick();
+
+    (void)BallVision_SendFeedback(
+        vision_frame,
+        (uint32_t)(now - vision_last_rx_ms),
+        ball_position,
+        ball_velocity,
+        control_error,
+        p_term,
+        i_term,
+        d_term,
+        motor_command,
+        motor_status);
+}
 
 static float BalanceControl_AbsFloat(float value)
 {
@@ -82,6 +109,8 @@ void BalanceControl_Init(void)
     balance_control_state.ball_position = 0.0f;
     balance_control_state.ball_velocity = 0.0f;
     balance_control_state.position_error = 0.0f;
+    balance_control_state.position_p_term = 0.0f;
+    balance_control_state.position_i_term = 0.0f;
     balance_control_state.velocity_d_term = 0.0f;
     balance_control_state.pid_output = 0.0f;
     balance_control_state.motor_command = 0;
@@ -105,6 +134,8 @@ void BalanceControl_Start(float target_position)
     balance_control_state.ball_position = 0.0f;
     balance_control_state.ball_velocity = 0.0f;
     balance_control_state.position_error = 0.0f;
+    balance_control_state.position_p_term = 0.0f;
+    balance_control_state.position_i_term = 0.0f;
     balance_control_state.velocity_d_term = 0.0f;
     balance_control_state.pid_output = 0.0f;
     balance_control_state.motor_command = 0;
@@ -121,6 +152,9 @@ void BalanceControl_SetTarget(float target_position)
     balance_control_state.target_position = target_position;
     balance_control_state.stable = 0U;
     balance_control_state.stable_count = 0U;
+    balance_control_state.position_p_term = 0.0f;
+    balance_control_state.position_i_term = 0.0f;
+    balance_control_state.velocity_d_term = 0.0f;
     PID_Cycle_Reset(&balance_position_pid);
 }
 
@@ -129,14 +163,20 @@ void BalanceControl_Update(void)
     const DS_State *ds;
     uint32_t now;
     uint32_t primask;
+    uint32_t vision_frame;
+    uint32_t vision_last_rx_ms;
     float ball_position;
     float ball_velocity;
     float raw_error;
+    float position_p_term;
+    float position_i_term;
     float output;
     float velocity_d_term;
     int32_t motor_command;
     int32_t previous_motor_command;
     int8_t motor_direction;
+    uint8_t motor_command_attempted;
+    HAL_StatusTypeDef motor_status;
 
     if (balance_control_state.enabled == 0U) {
         return;
@@ -155,11 +195,24 @@ void BalanceControl_Update(void)
     if (balance_control_state.vision_valid == 0U) {
         if (balance_control_had_valid_vision != 0U ||
             balance_control_state.motor_command != 0) {
-            (void)DS_BalanceStop();
+            motor_status = DS_BalanceStop();
+            BalanceControl_SendMotorFeedback(
+                ds->ball_vision_frame_count,
+                ds->ball_vision_last_rx_ms,
+                balance_control_state.ball_position,
+                balance_control_state.ball_velocity,
+                balance_control_state.position_error,
+                0.0f,
+                0.0f,
+                0.0f,
+                0,
+                motor_status);
         }
         balance_control_had_valid_vision = 0U;
         balance_control_state.stable = 0U;
         balance_control_state.stable_count = 0U;
+        balance_control_state.position_p_term = 0.0f;
+        balance_control_state.position_i_term = 0.0f;
         balance_control_state.velocity_d_term = 0.0f;
         balance_control_state.pid_output = 0.0f;
         balance_control_state.motor_command = 0;
@@ -175,6 +228,8 @@ void BalanceControl_Update(void)
     __disable_irq();
     ball_position = ds->ball_position;
     ball_velocity = ds->ball_velocity;
+    vision_frame = ds->ball_vision_frame_count;
+    vision_last_rx_ms = ds->ball_vision_last_rx_ms;
     if (primask == 0U) {
         __enable_irq();
     }
@@ -194,6 +249,10 @@ void BalanceControl_Update(void)
     output = PID_Control(&balance_position_pid,
                          balance_control_state.target_position,
                          balance_control_state.ball_position);
+    position_p_term = balance_control_config.kp *
+                      balance_position_pid.error;
+    position_i_term = balance_control_config.ki *
+                      balance_position_pid.integral;
 
     /*
      * For a fixed target, d(target - position)/dt = -ball_velocity.
@@ -212,10 +271,14 @@ void BalanceControl_Update(void)
         BalanceControl_AbsFloat(balance_control_state.ball_velocity) <=
             balance_control_config.velocity_deadband) {
         balance_position_pid.integral = 0.0f;
+        position_p_term = 0.0f;
+        position_i_term = 0.0f;
         velocity_d_term = 0.0f;
         output = 0.0f;
     }
 
+    balance_control_state.position_p_term = position_p_term;
+    balance_control_state.position_i_term = position_i_term;
     balance_control_state.velocity_d_term = velocity_d_term;
     motor_direction = balance_control_config.motor_direction;
     if (motor_direction == 0) {
@@ -227,18 +290,34 @@ void BalanceControl_Update(void)
 
     balance_control_state.pid_output = output;
     balance_control_state.motor_command = motor_command;
+    motor_command_attempted = 0U;
+    motor_status = HAL_OK;
 
     if (motor_command == 0) {
         if (previous_motor_command != 0) {
-            balance_control_state.last_motor_status =
-                DS_BalanceStop();
-        } else {
-            balance_control_state.last_motor_status = HAL_OK;
+            motor_status = DS_BalanceStop();
+            motor_command_attempted = 1U;
         }
     } else {
-        balance_control_state.last_motor_status =
-            DS_BalanceSetSpeed(motor_command,
-                               balance_control_config.motor_slope);
+        motor_status = DS_BalanceSetSpeed(
+            motor_command,
+            balance_control_config.motor_slope);
+        motor_command_attempted = 1U;
+    }
+    balance_control_state.last_motor_status = motor_status;
+
+    if (motor_command_attempted != 0U) {
+        BalanceControl_SendMotorFeedback(
+            vision_frame,
+            vision_last_rx_ms,
+            ball_position,
+            ball_velocity,
+            raw_error,
+            position_p_term,
+            position_i_term,
+            velocity_d_term,
+            motor_command,
+            motor_status);
     }
 
     if (BalanceControl_AbsFloat(raw_error) <=
@@ -263,7 +342,48 @@ void BalanceControl_Update(void)
 
 void BalanceControl_Stop(void)
 {
+    const DS_State *ds = DS_GetState();
+    uint32_t primask;
+    uint32_t vision_frame;
+    uint32_t vision_last_rx_ms;
+    float ball_position;
+    float ball_velocity;
+    float control_error;
+    float p_term;
+    float i_term;
+    float d_term;
+    HAL_StatusTypeDef motor_status;
+
+    primask = __get_PRIMASK();
+    __disable_irq();
+    vision_frame = ds->ball_vision_frame_count;
+    vision_last_rx_ms = ds->ball_vision_last_rx_ms;
+    if (primask == 0U) {
+        __enable_irq();
+    }
+
+    ball_position = balance_control_state.ball_position;
+    ball_velocity = balance_control_state.ball_velocity;
+    control_error = balance_control_state.position_error;
+    p_term = balance_control_state.position_p_term;
+    i_term = balance_control_state.position_i_term;
+    d_term = balance_control_state.velocity_d_term;
+    motor_status = DS_BalanceStop();
+    BalanceControl_SendMotorFeedback(
+        vision_frame,
+        vision_last_rx_ms,
+        ball_position,
+        ball_velocity,
+        control_error,
+        p_term,
+        i_term,
+        d_term,
+        0,
+        motor_status);
+
     balance_control_state.enabled = 0U;
+    balance_control_state.position_p_term = 0.0f;
+    balance_control_state.position_i_term = 0.0f;
     balance_control_state.velocity_d_term = 0.0f;
     balance_control_state.pid_output = 0.0f;
     balance_control_state.motor_command = 0;
@@ -272,7 +392,7 @@ void BalanceControl_Stop(void)
     balance_control_had_valid_vision = 0U;
     PID_Cycle_SetEnable(&balance_position_pid, 0U);
     PID_Cycle_Reset(&balance_position_pid);
-    (void)DS_BalanceStop();
+    balance_control_state.last_motor_status = motor_status;
 }
 
 uint8_t BalanceControl_IsStable(void)

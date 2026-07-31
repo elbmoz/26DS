@@ -44,6 +44,8 @@ typedef struct
     volatile float ball_position;
     volatile float ball_velocity;
     volatile float position_error;
+    volatile float position_p_term;
+    volatile float position_i_term;
     volatile float velocity_d_term;
     volatile float pid_output;
     volatile int32_t motor_command;

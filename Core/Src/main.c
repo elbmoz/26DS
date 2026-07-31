@@ -50,7 +50,7 @@ int main(void)
     Error_Handler();
   }
 
-  (void)DS_BalanceMoveRelative(350, 50U, 10U);
+  (void)DS_BalanceMoveRelative(300, 50U, 10U);
 
   DS_Task_Init();
 
@@ -157,6 +157,11 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
   serial_Handler(huart);
   hwt_Handler(huart);
   BallVision_UART_RxCpltCallback(huart);
+}
+
+void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
+{
+  BallVision_UART_TxCpltCallback(huart);
 }
 
 void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
