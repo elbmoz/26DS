@@ -1,0 +1,107 @@
+{
+  "schema_version": 1,
+  "source_telemetry": "telemetry.jsonl",
+  "residual_limit_deg": 0.75,
+  "counts": {
+    "unique_q9_frames": 207,
+    "fit_eligible_frames": 205,
+    "robust_inliers": 177,
+    "robust_outliers": 28,
+    "json_or_q9_parse_errors": 0
+  },
+  "validated_range": {
+    "motor_position_min": 1817,
+    "motor_position_max": 9207,
+    "angle_x_deg_min": -8.6,
+    "angle_x_deg_max": 6.6
+  },
+  "raw_linear_fit": {
+    "slope_deg_per_count": -0.0019723191148113208,
+    "intercept_deg": 9.849966993091444,
+    "zero_angle_position": 4994.104107759321,
+    "counts_per_degree": 507.01734445019747,
+    "sample_count": 205,
+    "rmse_deg": 1.4497347820872297,
+    "mae_deg": 0.5645215494053453,
+    "max_abs_error_deg": 13.21498286449418,
+    "r_squared": 0.9520710498617148
+  },
+  "robust_linear_fit": {
+    "slope_deg_per_count": -0.0020022658357713168,
+    "intercept_deg": 10.06322839404476,
+    "zero_angle_position": 5025.920242088226,
+    "counts_per_degree": 499.4341820824097,
+    "sample_count": 177,
+    "rmse_deg": 0.17856722998986663,
+    "mae_deg": 0.14162973503038867,
+    "max_abs_error_deg": 0.7476452849442357,
+    "r_squared": 0.9993081629721546
+  },
+  "direction_fits": {
+    "-1": {
+      "slope_deg_per_count": -0.0019926289782769943,
+      "intercept_deg": 10.051949122952514,
+      "zero_angle_position": 5044.566365608279,
+      "counts_per_degree": 501.84957204862576,
+      "sample_count": 124,
+      "rmse_deg": 0.17518863723813083,
+      "mae_deg": 0.1392653325258392,
+      "max_abs_error_deg": 0.6871588782762625,
+      "r_squared": 0.9975205232546753
+    },
+    "1": {
+      "slope_deg_per_count": -0.001986919660775209,
+      "intercept_deg": 9.909759089929699,
+      "zero_angle_position": 4987.4986319594545,
+      "counts_per_degree": 503.2916125103135,
+      "sample_count": 53,
+      "rmse_deg": 0.17834748186769137,
+      "mae_deg": 0.143431309027978,
+      "max_abs_error_deg": 0.547866155120988,
+      "r_squared": 0.9985200443510999
+    }
+  },
+  "direction_hysteresis": {
+    "zero_position_difference": 57.06773364882429,
+    "equivalent_angle_deg": 0.11426477340993806
+  },
+  "timing": {
+    "best_position_time_offset_ms": 75,
+    "aligned_raw_rmse_deg": 1.0424558243551587,
+    "interpretation": "positive means comparing current angle with a future position sample improves alignment"
+  },
+  "mapping_table": [
+    {
+      "angle_x_deg": -8,
+      "motor_position": 9021.393698747503
+    },
+    {
+      "angle_x_deg": -6,
+      "motor_position": 8022.525334582684
+    },
+    {
+      "angle_x_deg": -4,
+      "motor_position": 7023.656970417865
+    },
+    {
+      "angle_x_deg": -2,
+      "motor_position": 6024.788606253045
+    },
+    {
+      "angle_x_deg": 0,
+      "motor_position": 5025.920242088226
+    },
+    {
+      "angle_x_deg": 2,
+      "motor_position": 4027.051877923406
+    },
+    {
+      "angle_x_deg": 4,
+      "motor_position": 3028.183513758587
+    },
+    {
+      "angle_x_deg": 6,
+      "motor_position": 2029.3151495937677
+    }
+  ]
+}

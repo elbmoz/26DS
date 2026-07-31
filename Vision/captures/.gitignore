@@ -8,3 +8,13 @@ stream_sessions/stream_20260730_144332/*
 !stream_sessions/stream_20260730_144332/analysis.json
 !stream_sessions/stream_20260730_144332/analysis.txt
 !stream_sessions/stream_20260730_144332/tracking.csv
+!stream_sessions/stream_20260731_151006/
+stream_sessions/stream_20260731_151006/*
+!stream_sessions/stream_20260731_151006/Q9_MOTOR_ANGLE_MAPPING.md
+!stream_sessions/stream_20260731_151006/q9_motor_angle_fit.json
+!stream_sessions/stream_20260731_151006/q9_motor_angle_samples.csv
+!stream_sessions/stream_20260731_151006/q9_mapping_video_contact.jpg
+!stream_sessions/stream_20260731_151006/session.json
+!stream_sessions/stream_20260731_151006/telemetry.jsonl
+!stream_sessions/stream_20260731_151006/video.mp4
+!stream_sessions/stream_20260731_151006/video_frames.csv

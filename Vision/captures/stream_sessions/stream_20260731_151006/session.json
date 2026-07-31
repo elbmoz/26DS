@@ -1,0 +1,87 @@
+{
+  "status": "stopped",
+  "session_directory": "H:\\speed\\26DS\\Vision\\captures\\stream_sessions\\stream_20260731_151006",
+  "recording_enabled": true,
+  "transport": "tcp",
+  "initial_sync_offset_ms": 0.0,
+  "iteration_api_url": "http://127.0.0.1:8765",
+  "device_ip": "10.16.6.1",
+  "rtsp_url": "rtsp://10.16.6.1:8554/live",
+  "stream_width": 448,
+  "stream_height": 336,
+  "stream_fps": 20,
+  "ffmpeg_started_epoch_ns": 1785481807866189100,
+  "ffmpeg_started_monotonic_ns": 195078618475600,
+  "first_video_frame_monotonic_ns": 195081742934300,
+  "video": "H:\\speed\\26DS\\Vision\\captures\\stream_sessions\\stream_20260731_151006\\video.mp4",
+  "ffmpeg_returncode": 0,
+  "decoded_preview_frames": 755,
+  "dropped_preview_frames": 0,
+  "timestamped_preview_frames": 755,
+  "invalid_udp_packets": 0,
+  "last_device_status": {
+    "v": 1,
+    "type": "status",
+    "session": "000070ca",
+    "seq": 7516,
+    "device_ms": 242009,
+    "state": "running",
+    "rtsp_url": "rtsp://10.16.6.1:8554/live",
+    "control_port": 42102,
+    "camera_size": [
+      480,
+      360
+    ],
+    "stream_size": [
+      448,
+      336
+    ],
+    "stream_fps": 20,
+    "stream_bitrate": 1000000,
+    "roi": [
+      13,
+      72,
+      392,
+      64
+    ],
+    "axis_start": [
+      26.0,
+      99.0
+    ],
+    "axis_end": [
+      402.73383173601167,
+      108.58855682811058
+    ],
+    "config": {
+      "algorithm": "ai",
+      "model": "/root/models/maixhub/312328/model_312328.mud",
+      "target_position": 0.5,
+      "travel_start_px": 25.499,
+      "travel_end_px": 0.0,
+      "confidence": 0.25,
+      "valid_confidence": 0.25,
+      "iou": 0.45,
+      "coast_frames": 2,
+      "input_size": [
+        224,
+        224
+      ]
+    },
+    "network_errors": 0,
+    "control_errors": 0,
+    "_host_epoch_ns": 1785481847823994200,
+    "_host_monotonic_ns": 195118576280000,
+    "_source_ip": "10.16.6.1"
+  },
+  "analysis_report": "H:\\speed\\26DS\\Vision\\captures\\stream_sessions\\stream_20260731_151006\\analysis.txt",
+  "analysis_json": "H:\\speed\\26DS\\Vision\\captures\\stream_sessions\\stream_20260731_151006\\analysis.json",
+  "final_sync_offset_ms": 0.0,
+  "started_epoch_ns": 1785481806976856000,
+  "started_monotonic_ns": 195077729143100,
+  "ended_epoch_ns": 1785481849186563100,
+  "ended_monotonic_ns": 195119938850300,
+  "packet_count": 1300,
+  "tracking_count": 1258,
+  "feedback_count": 0,
+  "video_frame_count": 748
+}
