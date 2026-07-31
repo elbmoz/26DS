@@ -330,6 +330,7 @@ static void BalanceControl_UpdateOuter(uint32_t now,
     float dt;
     float output;
     int8_t tilt_direction;
+    uint8_t freeze_integral = 0U;
 
     if (vision_frame == balance_control_last_vision_frame) {
         return;
@@ -392,7 +393,7 @@ static void BalanceControl_UpdateOuter(uint32_t now,
         balance_control_config.freeze_integral_velocity_px_s) {
         kp *= balance_control_config.freeze_kp_scale;
         kd *= balance_control_config.freeze_kd_scale;
-        ki = 0.0f;
+        freeze_integral = 1U;
         balance_control_state.outer_integral *=
             balance_control_config.freeze_integral_decay;
         angle_limit *=
