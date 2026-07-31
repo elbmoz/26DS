@@ -2,6 +2,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 WINDOWS_DIR = Path(__file__).resolve().parents[1] / "windows"
@@ -9,6 +10,8 @@ sys.path.insert(0, str(WINDOWS_DIR))
 
 from device_manager import (
     DeviceManagerError,
+    LAUNCHER_UI_COMMAND,
+    MaixCamDeviceManager,
     build_manifest,
     preflight_source,
     source_files,
@@ -74,3 +77,47 @@ class DeviceManagerLocalTests(unittest.TestCase):
             (source / "module.py").write_text("VALUE=1\n", encoding="utf-8")
             with self.assertRaises(DeviceManagerError):
                 build_manifest(source)
+
+    def test_launcher_ui_is_suspended_by_exact_pid(self):
+        manager = MaixCamDeviceManager()
+        launcher = {
+            "pid": 321,
+            "state": "S",
+            "command": LAUNCHER_UI_COMMAND,
+        }
+        with (
+            patch.object(
+                manager, "_launcher_ui", return_value=launcher.copy()
+            ),
+            patch.object(manager, "_process_state", return_value="T"),
+            patch.object(manager, "_exec") as remote_exec,
+        ):
+            result = manager._suspend_launcher_ui()
+
+        remote_exec.assert_called_once_with("kill -STOP 321", timeout=5)
+        self.assertTrue(result["suspended"])
+        self.assertEqual(result["state"], "T")
+
+    def test_start_refuses_when_launcher_ui_is_not_available(self):
+        manager = MaixCamDeviceManager()
+        with patch.object(manager, "_launcher_ui", return_value=None):
+            with self.assertRaisesRegex(
+                DeviceManagerError, "exit the foreground device app"
+            ):
+                manager._suspend_launcher_ui()
+
+    def test_restart_keeps_launcher_suspended_during_handoff(self):
+        manager = MaixCamDeviceManager()
+        with (
+            patch.object(
+                manager, "stop", return_value={"ok": True}
+            ) as stop,
+            patch.object(
+                manager, "start", return_value={"ok": True}
+            ) as start,
+        ):
+            result = manager.restart(wait_seconds=2.5)
+
+        stop.assert_called_once_with(resume_launcher=False)
+        start.assert_called_once_with(wait_seconds=2.5)
+        self.assertTrue(result["ok"])

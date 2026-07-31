@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>钢球视觉监控</title>
+  <title>MaixHub 钢球追踪控制台</title>
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -32,6 +32,11 @@
         <small>FPS</small>
       </div>
       <div>
+        <span>置信度</span>
+        <strong id="metric-quality">—</strong>
+        <small>%</small>
+      </div>
+      <div>
         <span>检测</span>
         <strong id="metric-detect">—</strong>
         <small>ms</small>
@@ -44,6 +49,7 @@
     </div>
 
     <div class="primary-actions">
+      <span id="active-model-chip" class="model-chip">AI · —</span>
       <span id="stream-state" class="stream-flag">STREAM OFFLINE</span>
       <span id="record-state" class="stream-flag">PREVIEW ONLY</span>
       <button id="record-button" class="button accent">录制</button>
@@ -56,7 +62,7 @@
     <section class="vision-stage" aria-label="实时视觉数据">
       <div class="video-zone">
         <div class="video-heading">
-          <span>相机与识别叠加</span>
+          <span>MaixHub AI 识别画面</span>
           <strong id="tracking-verdict" class="verdict neutral">无测量</strong>
         </div>
         <div class="frame-shell">
@@ -166,15 +172,15 @@
   <aside id="inspector" class="inspector" aria-hidden="true">
     <div class="inspector-header">
       <div>
-        <p class="eyebrow">SECONDARY</p>
-        <h2>设置与记录</h2>
+        <p class="eyebrow">AI CONTROL</p>
+        <h2>模型与追踪设置</h2>
       </div>
       <button id="inspector-close" class="icon-button" aria-label="关闭设置">×</button>
     </div>
 
     <nav class="tabs" aria-label="设置页面">
       <button class="tab active" data-tab="tracking">状态</button>
-      <button class="tab" data-tab="parameters">参数</button>
+      <button class="tab" data-tab="parameters">AI 参数</button>
       <button class="tab" data-tab="system">设备</button>
       <button class="tab" data-tab="logs">日志</button>
     </nav>
@@ -185,9 +191,12 @@
         <span>当前帧</span>
       </div>
       <dl class="status-list">
+        <div><dt>当前 AI 模型</dt><dd id="status-model">—</dd></div>
+        <div><dt>本帧置信度</dt><dd id="status-confidence">—</dd></div>
+        <div><dt>相信阈值</dt><dd id="status-threshold">—</dd></div>
         <div><dt>真实检测点</dt><dd id="status-measured">—</dd></div>
         <div><dt>控制输出有效</dt><dd id="status-valid">—</dd></div>
-        <div><dt id="status-reference-label">坐标参考</dt><dd id="status-pipe">—</dd></div>
+        <div><dt>坐标参考</dt><dd id="status-pipe">固定安装标定</dd></div>
         <div><dt>横向偏差</dt><dd id="status-lateral">—</dd></div>
         <div><dt>目标误差</dt><dd id="status-error">—</dd></div>
         <div><dt>视频 / 遥测同步</dt><dd id="status-sync">—</dd></div>
@@ -228,47 +237,55 @@
 
     <section class="tab-panel" data-panel="parameters">
       <div class="panel-heading">
-        <h3>视觉参数</h3>
+        <h3>AI 模型与追踪</h3>
         <span id="config-state" class="verdict neutral">设备值</span>
       </div>
+      <div class="ai-model-summary">
+        <span>当前运行</span>
+        <strong id="current-model-name">等待设备</strong>
+        <code id="current-model-path">—</code>
+      </div>
       <form id="parameter-form">
-        <label>
-          <span>目标停球位置 <small>0—1 管长</small></span>
-          <input name="target_position" type="number" min="0.05" max="0.95" step="0.01">
+        <label class="control-field">
+          <span>MaixHub 模型 <small id="model-count">扫描中</small></span>
+          <select id="model-select" name="model" data-value-type="string">
+            <option value="">等待设备模型列表</option>
+          </select>
         </label>
-        <label>
-          <span>圆检测严格度 <small>越高误圆越少</small></span>
-          <input name="circle_threshold" type="number" min="100" max="5000" step="50">
-        </label>
+        <p class="field-note">切换时短暂停止推理；只有新模型加载成功后才会替换当前模型。</p>
+
+        <div class="control-field threshold-control">
+          <div class="control-label">
+            <span>相信阈值</span>
+            <output id="confidence-output">13%</output>
+          </div>
+          <input id="confidence-slider" type="range" min="1" max="99" step="1" value="13">
+          <div class="preset-row" aria-label="置信度快捷值">
+            <button type="button" data-confidence-preset="5">5%</button>
+            <button type="button" data-confidence-preset="13">13%</button>
+            <button type="button" data-confidence-preset="20">20%</button>
+            <button type="button" data-confidence-preset="30">30%</button>
+          </div>
+          <p class="field-note">检测阈值与有效输出阈值保持一致，避免“看到框但不相信”的双阈值混乱。</p>
+        </div>
+
         <div class="paired-inputs">
-          <label>
-            <span>钢球最小半径</span>
-            <input name="circle_min_radius" type="number" min="4" max="24" step="1">
+          <label class="control-field">
+            <span>目标位置 <small>% 管长</small></span>
+            <input id="target-percent" type="number" min="5" max="95" step="1" value="50">
           </label>
-          <label>
-            <span>钢球最大半径</span>
-            <input name="circle_max_radius" type="number" min="6" max="32" step="1">
+          <label class="control-field">
+            <span>NMS IoU <small>%</small></span>
+            <input id="iou-percent" type="number" min="1" max="99" step="1" value="45">
           </label>
         </div>
-        <label>
-          <span>中心线上方范围 <small>检测像素</small></span>
-          <input name="max_axis_distance_px" type="number" min="3" max="80" step="1">
+        <label class="control-field">
+          <span>短时预测 <small>连续丢球帧数</small></span>
+          <input id="coast-frames" type="number" min="0" max="15" step="1" value="2">
         </label>
-        <label>
-          <span>重新找球可信度 <small>越高越谨慎</small></span>
-          <input name="acquire_min_quality" type="number" min="0" max="250" step="1">
-        </label>
-        <label>
-          <span>最大单帧跳动 <small>检测像素</small></span>
-          <input name="max_frame_jump_px" type="number" min="5" max="240" step="1">
-        </label>
-        <label>
-          <span>丢球后继续预测 <small>帧</small></span>
-          <input name="coast_frames" type="number" min="0" max="15" step="1">
-        </label>
-        <button class="button accent full" type="submit">应用视觉参数</button>
+        <button class="button accent full" type="submit">应用 AI 配置</button>
       </form>
-      <p class="safety-note">这里只调整视觉检测，不发送电机或 PID 指令。</p>
+      <p class="safety-note">配置直接写入 MaixCAM 并持久化；不会修改电机或 PID 参数。模型加载失败时保留旧模型。</p>
     </section>
 
     <section class="tab-panel" data-panel="system">
@@ -278,6 +295,7 @@
       </div>
       <dl class="status-list">
         <div><dt>MaixCAM 地址</dt><dd id="system-ip">—</dd></div>
+        <div><dt>运行模型</dt><dd id="system-model">—</dd></div>
         <div><dt>受管进程</dt><dd id="system-process">—</dd></div>
         <div><dt>当前版本</dt><dd id="system-release">—</dd></div>
         <div><dt>源码哈希</dt><dd id="system-hash">—</dd></div>

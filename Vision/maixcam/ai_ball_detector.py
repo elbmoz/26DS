@@ -1,6 +1,8 @@
 """MaixHub YOLO steel-ball detector with a small temporal output filter."""
 
+import json
 import math
+import os
 
 
 def _clamp(value, low, high):
@@ -59,6 +61,7 @@ class AIVisionConfig:
         "valid_confidence",
         "iou",
         "coast_frames",
+        "runtime_config_path",
     )
 
     def __init__(
@@ -73,6 +76,7 @@ class AIVisionConfig:
         valid_confidence=0.50,
         iou=0.45,
         coast_frames=2,
+        runtime_config_path=None,
     ):
         self.model_path = str(model_path)
         self.frame_width = int(frame_width)
@@ -86,6 +90,11 @@ class AIVisionConfig:
         )
         self.iou = _clamp(float(iou), 0.01, 0.99)
         self.coast_frames = max(0, int(coast_frames))
+        self.runtime_config_path = (
+            None
+            if not runtime_config_path
+            else str(runtime_config_path)
+        )
 
 
 class StaticReference:
@@ -178,6 +187,117 @@ class AIBallDetector:
         self.hits = 0
         self.misses = 0
         self.quality = 0.0
+
+    def _runtime_payload(self, values):
+        return {
+            "model": str(values["model"]),
+            "target_position": float(values["target_position"]),
+            "confidence": float(values["confidence"]),
+            "valid_confidence": float(values["valid_confidence"]),
+            "iou": float(values["iou"]),
+            "coast_frames": int(values["coast_frames"]),
+        }
+
+    def _persist_runtime_config(self, values):
+        path = self.config.runtime_config_path
+        if not path:
+            return
+        directory = os.path.dirname(path)
+        if directory:
+            try:
+                os.makedirs(directory)
+            except OSError:
+                pass
+        temporary = path + ".tmp"
+        with open(temporary, "w") as handle:
+            json.dump(
+                self._runtime_payload(values),
+                handle,
+                separators=(",", ":"),
+            )
+        try:
+            os.replace(temporary, path)
+        except AttributeError:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+            os.rename(temporary, path)
+
+    def _reset_track(self):
+        self.track_x = None
+        self.track_y = None
+        self.position_px = None
+        self.lateral_px = 0.0
+        self.velocity_px_s = 0.0
+        self.radius = 0.0
+        self.last_ms = None
+        self.hits = 0
+        self.misses = 0
+        self.quality = 0.0
+
+    def apply_runtime_config(self, params):
+        """Atomically validate, load and persist an AI configuration."""
+        values = {
+            "model": params.get("model", self.config.model_path),
+            "target_position": params.get(
+                "target_position", self.config.target_position
+            ),
+            "confidence": params.get(
+                "confidence", self.config.confidence
+            ),
+            "valid_confidence": params.get(
+                "valid_confidence", self.config.valid_confidence
+            ),
+            "iou": params.get("iou", self.config.iou),
+            "coast_frames": params.get(
+                "coast_frames", self.config.coast_frames
+            ),
+        }
+        confidence = float(values["confidence"])
+        valid_confidence = float(values["valid_confidence"])
+        if valid_confidence < confidence:
+            raise ValueError(
+                "valid_confidence must be >= confidence"
+            )
+
+        next_model = None
+        next_width = self.input_width
+        next_height = self.input_height
+        next_labels = self.labels
+        model_changed = str(values["model"]) != self.config.model_path
+        if model_changed:
+            from maix import nn
+
+            next_model = nn.YOLOv5(model=str(values["model"]))
+            next_width = int(next_model.input_width())
+            next_height = int(next_model.input_height())
+            next_labels = list(getattr(next_model, "labels", ()))
+            if next_width <= 0 or next_height <= 0:
+                raise ValueError("new model has an invalid input size")
+
+        self._persist_runtime_config(values)
+        if next_model is not None:
+            previous_model = self.model
+            self.model = next_model
+            self.input_width = next_width
+            self.input_height = next_height
+            self.labels = next_labels
+            del previous_model
+            self._reset_track()
+
+        self.config.model_path = str(values["model"])
+        self.config.target_position = _clamp(
+            float(values["target_position"]), 0.0, 1.0
+        )
+        self.config.confidence = _clamp(confidence, 0.01, 0.99)
+        self.config.valid_confidence = _clamp(
+            valid_confidence, self.config.confidence, 0.99
+        )
+        self.config.iou = _clamp(float(values["iou"]), 0.01, 0.99)
+        self.config.coast_frames = max(
+            0, int(values["coast_frames"])
+        )
 
     def _boxes(self, img):
         network_image = img.resize(self.input_width, self.input_height)

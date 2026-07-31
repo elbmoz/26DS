@@ -1,5 +1,7 @@
 """Low-latency steel-ball tracking for the pipe balance device."""
 
+import json
+
 from maix import app, camera, display, err, image, pinmap, time, uart
 
 import ball_config as cfg
@@ -10,6 +12,7 @@ from loop_timing import periodic_due
 from pipe_pose import GreenPipePoseDetector, TapeEndpointPipePoseDetector
 from stm32_link import Stm32Link
 from vision_v2 import BallVisionV2, VisionV2Config
+from stream_protocol import validate_parameters
 
 
 def init_uart():
@@ -62,18 +65,45 @@ def configure_camera(cam):
 
 def build_detector():
     if cfg.VISION_ALGORITHM == "ai":
+        runtime_values = {}
+        runtime_path = getattr(cfg, "AI_RUNTIME_CONFIG_PATH", None)
+        if runtime_path:
+            try:
+                with open(runtime_path, "r") as handle:
+                    loaded = json.load(handle)
+                runtime_values, runtime_errors = validate_parameters(
+                    loaded
+                )
+                if runtime_errors:
+                    print(
+                        "ignored invalid AI runtime settings:",
+                        runtime_errors,
+                    )
+            except (OSError, ValueError):
+                runtime_values = {}
         return AIBallDetector(
             AIVisionConfig(
-                model_path=cfg.AI_MODEL_PATH,
+                model_path=runtime_values.get(
+                    "model", cfg.AI_MODEL_PATH
+                ),
                 frame_width=cfg.CAMERA_WIDTH,
                 frame_height=cfg.CAMERA_HEIGHT,
                 axis_start=cfg.AXIS_START,
                 axis_end=cfg.AXIS_END,
-                target_position=cfg.TARGET_POSITION,
-                confidence=cfg.AI_CONFIDENCE,
-                valid_confidence=cfg.AI_VALID_CONFIDENCE,
-                iou=cfg.AI_IOU,
-                coast_frames=cfg.AI_COAST_FRAMES,
+                target_position=runtime_values.get(
+                    "target_position", cfg.TARGET_POSITION
+                ),
+                confidence=runtime_values.get(
+                    "confidence", cfg.AI_CONFIDENCE
+                ),
+                valid_confidence=runtime_values.get(
+                    "valid_confidence", cfg.AI_VALID_CONFIDENCE
+                ),
+                iou=runtime_values.get("iou", cfg.AI_IOU),
+                coast_frames=runtime_values.get(
+                    "coast_frames", cfg.AI_COAST_FRAMES
+                ),
+                runtime_config_path=runtime_path,
             )
         )
     if cfg.VISION_ALGORITHM == "v2":

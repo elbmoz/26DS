@@ -31,8 +31,13 @@ Vision/windows/start_operator_console.cmd
 - 单路 RTSP 实时画面、管道轴线、真实检测点、滤波位置和目标点。
 - 识别 FPS、检测耗时、位置、速度、图传延迟和视频/遥测同步误差。
 - 设备部署、重启、预览、Windows 录像、截图和实验阶段标记。
-- 常用视觉参数及 MaixCAM ACK 状态。
+- 已安装 MaixHub 模型、当前模型、统一置信度阈值、IoU、目标点、续跟帧数
+  及 MaixCAM ACK 状态。
 - 受管 PID、当前源码版本、设备日志和会话目录。
+
+上位机只管理 AI 追踪配置，不再暴露传统视觉 V1/V2 的切换或参数。模型与
+阈值修改收到 ACK 后会写入板端运行配置，部署或重启不会恢复成源码默认值。
+新模型加载失败时设备继续使用原模型，并把失败结果返回页面。
 
 页面与 Codex 共用下列本机接口，不需要控制浏览器或 MaixVision：
 
@@ -119,6 +124,12 @@ python Vision\windows\vision_agent.py rollback <release_id> --start
 `SIGINT`。超时才使用强制停止，结果中的 `forced` 会明确标出。它不会按
 进程名批量结束 MaixVision、系统应用或其他 Python 程序。
 
+MaixCAM 同时只能有一个前台应用稳定占用相机。启动受管追踪前，上位机会精确
+校验并暂停系统 launcher 的触摸界面，launcher 后台服务仍保持运行；正常停止
+后立即恢复界面。板端 watchdog 会在追踪进程异常退出时自动恢复 launcher。
+如果设备上已有其他前台应用，上位机会拒绝启动并提示先退出该应用，不会通过
+进程名强制结束未知程序。
+
 ## 推荐的自动迭代循环
 
 1. 修改一个可解释的算法因素。
@@ -128,5 +139,6 @@ python Vision\windows\vision_agent.py rollback <release_id> --start
 5. 读取新会话的 `analysis.json`、原始视频、遥测和拒绝原因。
 6. 效果变差时立即切回上一 `release_id`，再分析差异。
 
-在线小参数仍可通过 `iteration_client.py set` 热更新；检测通道分辨率、
-候选生成逻辑等代码级变化使用本上位机部署。
+模型、置信度阈值等 AI 参数优先在浏览器控制台热更新；
+`iteration_client.py set` 保留为脚本接口。检测通道分辨率、候选解析逻辑等
+代码级变化使用本上位机部署。

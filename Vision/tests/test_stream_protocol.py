@@ -145,6 +145,30 @@ class StreamProtocolTests(unittest.TestCase):
         self.assertIn("coast_frames", errors)
         self.assertIn("unknown", errors)
 
+    def test_ai_model_and_threshold_validation(self):
+        model = "/root/models/maixhub/312328/model_312328.mud"
+        clean, errors = validate_parameters(
+            {
+                "model": model,
+                "confidence": 0.13,
+                "valid_confidence": 0.13,
+                "iou": 0.45,
+            }
+        )
+        self.assertFalse(errors)
+        self.assertEqual(clean["model"], model)
+        self.assertEqual(clean["confidence"], 0.13)
+
+        clean, errors = validate_parameters(
+            {
+                "model": "/root/other/model.mud",
+                "confidence": 0.0,
+            }
+        )
+        self.assertFalse(clean)
+        self.assertIn("model", errors)
+        self.assertIn("confidence", errors)
+
     def test_apply_parameters_updates_runtime_objects(self):
         detector = FakeDetector()
         tracker = FakeTracker()

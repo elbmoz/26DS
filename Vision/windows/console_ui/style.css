@@ -43,7 +43,7 @@ button {
   z-index: 10;
   height: 60px;
   display: grid;
-  grid-template-columns: 218px minmax(480px, 1fr) auto;
+  grid-template-columns: 218px minmax(560px, 1fr) auto;
   align-items: stretch;
   border-bottom: 1px solid var(--line);
   background: rgba(7, 10, 14, 0.98);
@@ -114,7 +114,7 @@ button {
 .telemetry-strip {
   min-width: 0;
   display: grid;
-  grid-template-columns: repeat(5, minmax(76px, 1fr));
+  grid-template-columns: repeat(6, minmax(72px, 1fr));
   border-right: 1px solid var(--line);
   border-left: 1px solid var(--line);
 }
@@ -169,6 +169,20 @@ button {
 
 .stream-flag.active {
   color: #9aefda;
+}
+
+.model-chip {
+  max-width: 104px;
+  overflow: hidden;
+  padding: 5px 8px;
+  border: 1px solid rgba(67, 214, 177, 0.28);
+  border-radius: 999px;
+  background: rgba(67, 214, 177, 0.07);
+  color: #9aefda;
+  font-family: var(--mono);
+  font-size: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 #record-state.active {
@@ -753,7 +767,7 @@ body.chart-expanded .wave-grid > .wave-panel:not(.expanded) {
   top: 0;
   right: 0;
   bottom: 0;
-  width: min(440px, 94vw);
+  width: min(468px, 94vw);
   overflow: hidden;
   border-left: 1px solid #36414c;
   background: #0b1015;
@@ -953,13 +967,52 @@ body.chart-expanded .wave-grid > .wave-panel:not(.expanded) {
   text-overflow: ellipsis;
 }
 
-#parameter-form label {
-  display: block;
-  margin-bottom: 12px;
+.ai-model-summary {
+  margin: 4px 0 20px;
+  padding: 14px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
 }
 
-#parameter-form label > span {
+.ai-model-summary span,
+.ai-model-summary strong,
+.ai-model-summary code {
+  display: block;
+}
+
+.ai-model-summary span {
+  color: var(--muted);
+  font-size: 8px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.ai-model-summary strong {
+  margin-top: 5px;
+  font-size: 15px;
+  font-weight: 620;
+}
+
+.ai-model-summary code {
+  margin-top: 6px;
+  overflow: hidden;
+  color: #7f8d96;
+  font-family: var(--mono);
+  font-size: 8px;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#parameter-form .control-field {
+  display: block;
+  margin-bottom: 16px;
+}
+
+#parameter-form label > span,
+.control-label {
   display: flex;
+  align-items: center;
   justify-content: space-between;
   margin-bottom: 5px;
   color: #c9d1d5;
@@ -971,7 +1024,8 @@ body.chart-expanded .wave-grid > .wave-panel:not(.expanded) {
   font-weight: 400;
 }
 
-#parameter-form input {
+#parameter-form input:not([type="range"]),
+#parameter-form select {
   width: 100%;
   height: 35px;
   padding: 0 9px;
@@ -983,9 +1037,78 @@ body.chart-expanded .wave-grid > .wave-panel:not(.expanded) {
   font-family: var(--mono);
 }
 
-#parameter-form input:focus {
+#parameter-form select {
+  appearance: none;
+  padding-right: 30px;
+  background-image:
+    linear-gradient(45deg, transparent 50%, #81909a 50%),
+    linear-gradient(135deg, #81909a 50%, transparent 50%);
+  background-position:
+    calc(100% - 15px) 14px,
+    calc(100% - 10px) 14px;
+  background-repeat: no-repeat;
+  background-size: 5px 5px;
+}
+
+#parameter-form input:focus,
+#parameter-form select:focus {
   border-color: rgba(67, 214, 177, 0.7);
   box-shadow: 0 0 0 2px rgba(67, 214, 177, 0.08);
+}
+
+.threshold-control {
+  padding: 15px 0 16px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.control-label output {
+  color: #a6f4df;
+  font-family: var(--mono);
+  font-size: 15px;
+}
+
+#parameter-form input[type="range"] {
+  width: 100%;
+  height: 22px;
+  margin: 3px 0 9px;
+  accent-color: var(--accent);
+  cursor: ew-resize;
+}
+
+.preset-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+
+.preset-row button {
+  min-height: 29px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #0e141a;
+  color: #9da9b0;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 9px;
+}
+
+.preset-row button:hover,
+.preset-row button.active {
+  border-color: rgba(67, 214, 177, 0.5);
+  background: rgba(67, 214, 177, 0.08);
+  color: #a6f4df;
+}
+
+.field-note {
+  margin: -9px 0 17px;
+  color: var(--muted);
+  font-size: 8px;
+  line-height: 1.55;
+}
+
+.threshold-control .field-note {
+  margin: 10px 0 0;
 }
 
 .paired-inputs {
@@ -1114,10 +1237,11 @@ body.chart-expanded .wave-grid > .wave-panel:not(.expanded) {
 
 @media (max-width: 1120px) {
   .command-bar {
-    grid-template-columns: 180px minmax(410px, 1fr) auto;
+    grid-template-columns: 170px minmax(460px, 1fr) auto;
   }
 
-  .stream-flag {
+  .stream-flag,
+  .model-chip {
     display: none;
   }
 

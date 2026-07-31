@@ -14,6 +14,10 @@ MAX_PACKET_BYTES = 4096
 # Only vision parameters that are safe to change while tracking are exposed.
 # Camera geometry and LAB thresholds remain file-based calibration values.
 TUNABLE_SPECS = {
+    "model": ("model_path", None, None),
+    "confidence": ("float", 0.01, 0.99),
+    "valid_confidence": ("float", 0.01, 0.99),
+    "iou": ("float", 0.01, 0.99),
     "target_position": ("float", 0.05, 0.95),
     "position_alpha": ("float", 0.05, 1.00),
     "velocity_beta": ("float", 0.00, 1.00),
@@ -85,6 +89,24 @@ def validate_parameters(params):
         if spec is None:
             errors[name] = "unknown parameter"
             continue
+        kind, minimum, maximum = spec
+        if kind == "model_path":
+            if not isinstance(value, str):
+                errors[name] = "must be a string"
+                continue
+            clean_path = value.strip()
+            if (
+                not clean_path.startswith("/root/models/maixhub/")
+                or not clean_path.endswith(".mud")
+                or ".." in clean_path.split("/")
+                or len(clean_path) > 240
+            ):
+                errors[name] = (
+                    "must be a .mud file under /root/models/maixhub"
+                )
+                continue
+            clean[name] = clean_path
+            continue
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             errors[name] = "must be a number"
             continue
@@ -93,7 +115,6 @@ def validate_parameters(params):
             errors[name] = "must be finite"
             continue
 
-        kind, minimum, maximum = spec
         if numeric < minimum or numeric > maximum:
             errors[name] = "must be in [{}, {}]".format(minimum, maximum)
             continue
@@ -120,6 +141,7 @@ def config_snapshot(detector, tracker):
                 detector.config.valid_confidence
             ),
             "iou": _rounded(detector.config.iou),
+            "coast_frames": int(detector.config.coast_frames),
             "input_size": [
                 int(detector.input_width),
                 int(detector.input_height),
@@ -172,20 +194,31 @@ def config_snapshot(detector, tracker):
 def apply_parameters(clean, detector, tracker, config_module):
     """Apply already validated parameters and return the resulting snapshot."""
     if tracker is None and detector.__class__.__name__ == "AIBallDetector":
-        unsupported = [
-            name for name in clean if name != "target_position"
-        ]
+        supported = {
+            "model",
+            "target_position",
+            "confidence",
+            "valid_confidence",
+            "iou",
+            "coast_frames",
+        }
+        unsupported = [name for name in clean if name not in supported]
         if unsupported:
             raise ProtocolError(
                 "unsupported_parameter",
-                "AI only exposes target_position; rejected {}".format(
+                "AI rejected unsupported parameters {}".format(
                     ",".join(sorted(unsupported))
                 ),
             )
-        if "target_position" in clean:
-            value = clean["target_position"]
-            detector.config.target_position = value
-            config_module.TARGET_POSITION = value
+        detector.apply_runtime_config(clean)
+        config_module.AI_MODEL_PATH = detector.config.model_path
+        config_module.TARGET_POSITION = detector.config.target_position
+        config_module.AI_CONFIDENCE = detector.config.confidence
+        config_module.AI_VALID_CONFIDENCE = (
+            detector.config.valid_confidence
+        )
+        config_module.AI_IOU = detector.config.iou
+        config_module.AI_COAST_FRAMES = detector.config.coast_frames
         return config_snapshot(detector, tracker)
 
     if tracker is None and hasattr(detector, "config"):

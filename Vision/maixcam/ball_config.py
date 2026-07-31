@@ -86,6 +86,9 @@ V2_TARGET_POSITION = 0.535
 
 # MaixHub model 312301 (DS-7.30), installed through MaixVision on the device.
 AI_MODEL_PATH = "/root/models/maixhub/312301/model_312301.mud"
+AI_RUNTIME_CONFIG_PATH = (
+    "/root/pipe_ball_vision/runtime/ai_runtime_config.json"
+)
 # Accept every MaixHub detection above 13% as a trusted steel-ball output.
 AI_CONFIDENCE = 0.13
 AI_VALID_CONFIDENCE = 0.13

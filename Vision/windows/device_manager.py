@@ -1,8 +1,10 @@
 """SSH/SFTP lifecycle manager for the MaixCAM vision application.
 
 The manager deliberately owns only processes started from ``MANAGED_ROOT``.
-It never kills a process discovered by name, so MaixVision and unrelated
-device applications cannot be terminated accidentally.
+It never terminates a process discovered by name. While tracking is active it
+may suspend the exact MaixCAM launcher UI process so touch input cannot start a
+second camera application; a device-side watchdog resumes that UI if tracking
+exits unexpectedly.
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ import os
 from pathlib import Path
 import posixpath
 import socket
+import stat
 import time
 import uuid
 
@@ -26,6 +29,9 @@ CURRENT_LINK = posixpath.join(MANAGED_ROOT, "current")
 PID_FILE = posixpath.join(RUNTIME_DIR, "vision.pid")
 LOG_FILE = posixpath.join(RUNTIME_DIR, "device.log")
 MANIFEST_NAME = "deploy_manifest.json"
+MAIXHUB_MODELS_DIR = "/root/models/maixhub"
+LAUNCHER_UI_COMMAND = "/maixapp/apps/launcher/launcher daemon"
+LAUNCHER_HOLD_FILE = posixpath.join(RUNTIME_DIR, "launcher_ui.hold")
 
 SOURCE_SUFFIXES = {".py", ".jpg", ".jpeg", ".png", ".json"}
 
@@ -215,6 +221,13 @@ class MaixCamDeviceManager:
         self._sftp.chmod(temporary, 0o644)
         self._sftp.rename(temporary, path)
 
+    def _write_remote_text(self, path, value):
+        temporary = path + ".tmp-" + uuid.uuid4().hex[:8]
+        with self._sftp.open(temporary, "wb") as handle:
+            handle.write(str(value).encode("utf-8"))
+        self._sftp.chmod(temporary, 0o644)
+        self._sftp.rename(temporary, path)
+
     def _activate_release(self, release_id):
         relative_target = "releases/" + str(release_id)
         temporary = CURRENT_LINK + ".next-" + uuid.uuid4().hex[:8]
@@ -329,6 +342,128 @@ class MaixCamDeviceManager:
             "managed": managed,
         }
 
+    def _process_command(self, pid):
+        try:
+            with self._sftp.open(
+                "/proc/{}/cmdline".format(int(pid)), "rb"
+            ) as handle:
+                return (
+                    handle.read()
+                    .replace(b"\0", b" ")
+                    .decode("utf-8", errors="replace")
+                    .strip()
+                )
+        except OSError:
+            return None
+
+    def _process_state(self, pid):
+        try:
+            with self._sftp.open(
+                "/proc/{}/status".format(int(pid)), "r"
+            ) as handle:
+                lines = handle.read().decode(
+                    "utf-8", errors="replace"
+                ).splitlines()
+        except OSError:
+            return None
+        for line in lines:
+            if line.startswith("State:"):
+                fields = line.split()
+                return fields[1] if len(fields) > 1 else None
+        return None
+
+    def _find_exact_processes(self, command):
+        self._ensure_connected()
+        matches = []
+        try:
+            names = self._sftp.listdir("/proc")
+        except OSError:
+            return matches
+        for name in names:
+            if not str(name).isdigit():
+                continue
+            pid = int(name)
+            if self._process_command(pid) == command:
+                matches.append(pid)
+        return sorted(matches)
+
+    def _launcher_ui(self):
+        matches = self._find_exact_processes(LAUNCHER_UI_COMMAND)
+        if len(matches) > 1:
+            raise DeviceManagerError(
+                "multiple MaixCAM launcher UI processes found: {}".format(
+                    matches
+                )
+            )
+        if not matches:
+            return None
+        pid = matches[0]
+        return {
+            "pid": pid,
+            "state": self._process_state(pid),
+            "command": LAUNCHER_UI_COMMAND,
+        }
+
+    def _suspend_launcher_ui(self):
+        launcher = self._launcher_ui()
+        if launcher is None:
+            raise DeviceManagerError(
+                "MaixCAM launcher UI is unavailable; exit the foreground "
+                "device app before starting vision"
+            )
+        if launcher["state"] != "T":
+            self._exec(
+                "kill -STOP {}".format(launcher["pid"]),
+                timeout=5,
+            )
+            launcher["state"] = self._process_state(launcher["pid"])
+        if launcher["state"] != "T":
+            raise DeviceManagerError(
+                "could not suspend MaixCAM launcher UI"
+            )
+        launcher["suspended"] = True
+        return launcher
+
+    def _resume_launcher_ui(self):
+        launcher = self._launcher_ui()
+        if launcher is not None and launcher["state"] == "T":
+            self._exec(
+                "kill -CONT {}".format(launcher["pid"]),
+                check=False,
+                timeout=5,
+            )
+            launcher["state"] = self._process_state(launcher["pid"])
+        try:
+            self._sftp.remove(LAUNCHER_HOLD_FILE)
+        except OSError:
+            pass
+        return launcher
+
+    def _install_launcher_watchdog(
+        self, managed_pid, launcher_pid, release_id
+    ):
+        hold_value = "{}:{}".format(
+            int(managed_pid), int(launcher_pid)
+        )
+        self._write_remote_text(LAUNCHER_HOLD_FILE, hold_value + "\n")
+        managed_cwd = posixpath.join(RELEASES_DIR, str(release_id))
+        command = (
+            "nohup sh -c '"
+            "while [ \"$(readlink /proc/{managed}/cwd 2>/dev/null)\" "
+            "= \"{managed_cwd}\" ]; do sleep 1; done; "
+            "if [ \"$(cat {hold} 2>/dev/null)\" = \"{hold_value}\" ]; "
+            "then kill -CONT {launcher} 2>/dev/null; "
+            "rm -f {hold}; fi"
+            "' </dev/null >/dev/null 2>&1 &"
+        ).format(
+            managed=int(managed_pid),
+            managed_cwd=managed_cwd,
+            hold=LAUNCHER_HOLD_FILE,
+            hold_value=hold_value,
+            launcher=int(launcher_pid),
+        )
+        self._exec(command, timeout=5)
+
     def current_release(self):
         _, output, _ = self._exec(
             "readlink -f {}".format(CURRENT_LINK),
@@ -372,7 +507,62 @@ class MaixCamDeviceManager:
             ),
             "log_file": LOG_FILE,
             "log_tail": self.log_tail(log_lines),
+            "models": self.models(),
         }
+
+    def models(self):
+        """Return installed MaixHub .mud models without invoking a shell."""
+        self._ensure_connected()
+        results = []
+        try:
+            directories = self._sftp.listdir_attr(MAIXHUB_MODELS_DIR)
+        except OSError:
+            return results
+        for directory in directories:
+            if not stat.S_ISDIR(directory.st_mode):
+                continue
+            bundle_id = str(directory.filename)
+            bundle_path = posixpath.join(
+                MAIXHUB_MODELS_DIR, bundle_id
+            )
+            try:
+                files = self._sftp.listdir_attr(bundle_path)
+            except OSError:
+                continue
+            bundle_bytes = sum(
+                int(item.st_size)
+                for item in files
+                if stat.S_ISREG(item.st_mode)
+            )
+            bundle_modified = max(
+                (
+                    int(item.st_mtime)
+                    for item in files
+                    if stat.S_ISREG(item.st_mode)
+                ),
+                default=int(directory.st_mtime),
+            )
+            for item in files:
+                if (
+                    stat.S_ISREG(item.st_mode)
+                    and str(item.filename).endswith(".mud")
+                ):
+                    results.append(
+                        {
+                            "id": bundle_id,
+                            "name": str(item.filename),
+                            "path": posixpath.join(
+                                bundle_path, str(item.filename)
+                            ),
+                            "bytes": bundle_bytes,
+                            "modified_epoch_s": bundle_modified,
+                        }
+                    )
+        return sorted(
+            results,
+            key=lambda item: (item["id"], item["name"]),
+            reverse=True,
+        )
 
     def start(self, wait_seconds=4.0):
         status = self.status(log_lines=4)
@@ -391,12 +581,12 @@ class MaixCamDeviceManager:
             raise DeviceManagerError("no deployed release is active")
 
         self._mkdirs(RUNTIME_DIR)
+        launcher = self._suspend_launcher_ui()
         command = (
             "cd {current} && "
-            # MaixCAM's launcher daemon remains active for SSH-started apps
-            # and can consume about a quarter of the single CPU. Give the
-            # control-critical vision loop scheduling priority while leaving
-            # the launcher alive and responsive.
+            # The launcher daemon remains responsive, while only its touch UI
+            # is suspended above. Give the control-critical vision loop
+            # scheduling priority.
             "nohup nice -n -5 python3 -u main.py "
             "</dev/null >{log} 2>&1 & "
             "pid=$!; echo $pid >{pid_tmp}; mv {pid_tmp} {pid_file}; echo $pid"
@@ -406,34 +596,42 @@ class MaixCamDeviceManager:
             pid_tmp=PID_FILE + ".tmp",
             pid_file=PID_FILE,
         )
-        _, output, _ = self._exec(command, timeout=10)
-        started_pid = int(output.strip().splitlines()[-1])
-        deadline = time.monotonic() + max(0.5, float(wait_seconds))
-        process = None
-        while time.monotonic() < deadline:
-            process = self._process_info(started_pid)
-            if process and process["managed"]:
-                time.sleep(0.25)
-            else:
-                break
-            if "RTSP stream:" in self.log_tail(30):
-                break
-        process = self._process_info(started_pid)
-        if not process or not process["managed"]:
-            raise DeviceManagerError(
-                "vision process exited during startup:\n{}".format(
-                    self.log_tail(80)
-                )
+        try:
+            _, output, _ = self._exec(command, timeout=10)
+            started_pid = int(output.strip().splitlines()[-1])
+            self._install_launcher_watchdog(
+                started_pid, launcher["pid"], release_id
             )
+            deadline = time.monotonic() + max(0.5, float(wait_seconds))
+            process = None
+            while time.monotonic() < deadline:
+                process = self._process_info(started_pid)
+                if process and process["managed"]:
+                    time.sleep(0.25)
+                else:
+                    break
+                if "RTSP stream:" in self.log_tail(30):
+                    break
+            process = self._process_info(started_pid)
+            if not process or not process["managed"]:
+                raise DeviceManagerError(
+                    "vision process exited during startup:\n{}".format(
+                        self.log_tail(80)
+                    )
+                )
+        except Exception:
+            self._resume_launcher_ui()
+            raise
         return {
             "ok": True,
             "already_running": False,
             "pid": started_pid,
             "release_id": release_id,
             "log_tail": self.log_tail(30),
+            "launcher_ui": launcher,
         }
 
-    def stop(self, timeout=6.0):
+    def stop(self, timeout=6.0, resume_launcher=True):
         pid = self._read_pid()
         process = self._process_info(pid)
         if process is None:
@@ -441,7 +639,16 @@ class MaixCamDeviceManager:
                 self._sftp.remove(PID_FILE)
             except OSError:
                 pass
-            return {"ok": True, "already_stopped": True}
+            launcher = (
+                self._resume_launcher_ui()
+                if resume_launcher
+                else self._launcher_ui()
+            )
+            return {
+                "ok": True,
+                "already_stopped": True,
+                "launcher_ui": launcher,
+            }
         if not process["managed"]:
             raise DeviceManagerError(
                 "refusing to stop unmanaged PID {} ({})".format(
@@ -449,6 +656,10 @@ class MaixCamDeviceManager:
                 )
             )
 
+        if not resume_launcher:
+            self._write_remote_text(
+                LAUNCHER_HOLD_FILE, "transition\n"
+            )
         self._exec("kill -INT {}".format(pid), check=False)
         deadline = time.monotonic() + max(0.5, float(timeout))
         while time.monotonic() < deadline:
@@ -464,16 +675,22 @@ class MaixCamDeviceManager:
             self._sftp.remove(PID_FILE)
         except OSError:
             pass
+        launcher = (
+            self._resume_launcher_ui()
+            if resume_launcher
+            else self._launcher_ui()
+        )
         return {
             "ok": True,
             "already_stopped": False,
             "pid": pid,
             "forced": forced,
             "log_tail": self.log_tail(20),
+            "launcher_ui": launcher,
         }
 
     def restart(self, wait_seconds=4.0):
-        stopped = self.stop()
+        stopped = self.stop(resume_launcher=False)
         started = self.start(wait_seconds=wait_seconds)
         return {"ok": True, "stop": stopped, "start": started}
 

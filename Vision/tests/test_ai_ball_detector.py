@@ -1,6 +1,10 @@
 import sys
+import json
+import tempfile
+import types
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 MAIXCAM_DIR = Path(__file__).resolve().parents[1] / "maixcam"
@@ -47,7 +51,7 @@ class FakeImage:
         return ("resized", width, height)
 
 
-def make_detector(model=None):
+def make_detector(model=None, runtime_config_path=None):
     config = AIVisionConfig(
         model_path="/root/model.mud",
         frame_width=448,
@@ -59,6 +63,7 @@ def make_detector(model=None):
         valid_confidence=0.50,
         iou=0.45,
         coast_frames=2,
+        runtime_config_path=runtime_config_path,
     )
     return AIBallDetector(config, model=model or FakeModel())
 
@@ -147,6 +152,55 @@ class AIBallDetectorTests(unittest.TestCase):
         self.assertEqual(packet["algorithm"], "ai")
         self.assertEqual(len(packet["ai_boxes"]), 1)
         self.assertAlmostEqual(packet["ai_boxes"][0][4], 0.75)
+
+    def test_runtime_thresholds_are_persisted(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            runtime_path = Path(temporary) / "ai.json"
+            detector = make_detector(
+                runtime_config_path=str(runtime_path)
+            )
+
+            detector.apply_runtime_config(
+                {
+                    "confidence": 0.13,
+                    "valid_confidence": 0.13,
+                    "iou": 0.4,
+                    "coast_frames": 4,
+                    "target_position": 0.6,
+                }
+            )
+
+            saved = json.loads(runtime_path.read_text(encoding="utf-8"))
+            self.assertEqual(saved["confidence"], 0.13)
+            self.assertEqual(saved["valid_confidence"], 0.13)
+            self.assertEqual(saved["coast_frames"], 4)
+            self.assertEqual(detector.config.target_position, 0.6)
+
+    def test_model_switch_replaces_model_only_after_loading(self):
+        detector = make_detector()
+        replacement = FakeModel()
+        fake_maix = types.SimpleNamespace(
+            nn=types.SimpleNamespace(
+                YOLOv5=lambda model: replacement
+            )
+        )
+
+        with patch.dict(sys.modules, {"maix": fake_maix}):
+            detector.apply_runtime_config(
+                {
+                    "model": (
+                        "/root/models/maixhub/312328/"
+                        "model_312328.mud"
+                    )
+                }
+            )
+
+        self.assertIs(detector.model, replacement)
+        self.assertEqual(
+            detector.config.model_path,
+            "/root/models/maixhub/312328/model_312328.mud",
+        )
+        self.assertIsNone(detector.position_px)
 
 
 if __name__ == "__main__":

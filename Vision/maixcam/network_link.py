@@ -124,10 +124,10 @@ class UdpVisionLink:
                         data, self.control_token
                     )
                     if not errors:
-                        applied = clean
                         current = apply_parameters(
                             clean, detector, tracker, config_module
                         )
+                        applied = clean
                         ok = True
                     else:
                         current = config_snapshot(detector, tracker)

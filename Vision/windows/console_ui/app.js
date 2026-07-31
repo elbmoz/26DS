@@ -22,6 +22,12 @@ const ui = {
   simTarget: $(".sim-target"),
   signalValidDot: $("#signal-valid-dot"),
   signalValidLabel: $("#signal-valid-label"),
+  modelSelect: $("#model-select"),
+  confidenceSlider: $("#confidence-slider"),
+  confidenceOutput: $("#confidence-output"),
+  targetPercent: $("#target-percent"),
+  iouPercent: $("#iou-percent"),
+  coastFrames: $("#coast-frames"),
 };
 
 let latestState = null;
@@ -30,6 +36,7 @@ let frameReady = false;
 let frameTimer = null;
 let formDirty = false;
 let configFingerprint = "";
+let modelCatalogFingerprint = "";
 let toastTimer = null;
 let telemetrySource = null;
 let telemetrySourceUrl = "";
@@ -114,6 +121,108 @@ function finiteOrNull(value) {
 
 function clamp(value, minimum, maximum) {
   return Math.min(maximum, Math.max(minimum, value));
+}
+
+function modelIdFromPath(path) {
+  const value = String(path || "");
+  const match = value.match(
+    /\/root\/models\/maixhub\/([^/]+)\/model_([^/]+)\.mud$/,
+  );
+  if (match && match[1] === match[2]) return match[1];
+  const filename = value.split("/").pop();
+  return filename ? filename.replace(/\.mud$/i, "") : "—";
+}
+
+function modelDisplayName(path) {
+  const id = modelIdFromPath(path);
+  return id === "—" ? "AI 模型未上报" : `MaixHub ${id}`;
+}
+
+function setConfidencePercent(value) {
+  const percent = clamp(Math.round(Number(value) || 1), 1, 99);
+  ui.confidenceSlider.value = String(percent);
+  ui.confidenceOutput.value = `${percent}%`;
+  ui.confidenceOutput.textContent = `${percent}%`;
+  $$("[data-confidence-preset]").forEach((button) => {
+    button.classList.toggle(
+      "active",
+      Number(button.dataset.confidencePreset) === percent,
+    );
+  });
+}
+
+function syncModelOptions(models, currentPath) {
+  const installed = Array.isArray(models)
+    ? models.filter((item) => item && item.path)
+    : [];
+  const paths = installed.map((item) => String(item.path));
+  if (currentPath && !paths.includes(String(currentPath))) {
+    installed.unshift({
+      id: modelIdFromPath(currentPath),
+      name: String(currentPath).split("/").pop(),
+      path: String(currentPath),
+      currentOnly: true,
+    });
+  }
+  const fingerprint = JSON.stringify(
+    [
+      ["current", String(currentPath || "")],
+      ...installed.map((item) => [item.id, item.path, item.bytes]),
+    ],
+  );
+  if (fingerprint !== modelCatalogFingerprint) {
+    ui.modelSelect.replaceChildren();
+    if (!currentPath) {
+      const placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.textContent = "等待设备上报当前模型";
+      placeholder.selected = true;
+      ui.modelSelect.append(placeholder);
+    }
+    for (const model of installed) {
+      const option = document.createElement("option");
+      option.value = String(model.path);
+      const size =
+        Number.isFinite(Number(model.bytes)) && Number(model.bytes) > 0
+          ? ` · ${(Number(model.bytes) / 1024 / 1024).toFixed(1)} MB`
+          : "";
+      option.textContent =
+        `MaixHub ${model.id || modelIdFromPath(model.path)}` +
+        `${size}${model.currentOnly ? " · 当前" : ""}`;
+      ui.modelSelect.append(option);
+    }
+    if (!installed.length) {
+      const option = document.createElement("option");
+      option.value = "";
+      option.textContent = "设备上未发现 MaixHub 模型";
+      ui.modelSelect.append(option);
+    }
+    modelCatalogFingerprint = fingerprint;
+  }
+  ui.modelSelect.value = currentPath || "";
+  text(
+    "model-count",
+    installed.length ? `${installed.length} 个已安装` : "未发现模型",
+  );
+}
+
+function syncAIForm(config, models) {
+  const modelPath = String(config.model || "");
+  syncModelOptions(models, modelPath);
+  setConfidencePercent(
+    Number.isFinite(Number(config.confidence))
+      ? Number(config.confidence) * 100
+      : 13,
+  );
+  ui.targetPercent.value = Number.isFinite(Number(config.target_position))
+    ? String(Math.round(Number(config.target_position) * 100))
+    : "50";
+  ui.iouPercent.value = Number.isFinite(Number(config.iou))
+    ? String(Math.round(Number(config.iou) * 100))
+    : "45";
+  ui.coastFrames.value = Number.isFinite(Number(config.coast_frames))
+    ? String(Math.round(Number(config.coast_frames)))
+    : "2";
 }
 
 function appendTelemetrySample(
@@ -230,6 +339,12 @@ function renderLiveTelemetry(
   }
 
   text("metric-fps", formatNumber(tracking.fps, 1));
+  text(
+    "metric-quality",
+    Number.isFinite(Number(tracking.quality))
+      ? Number(tracking.quality).toFixed(1)
+      : "—",
+  );
   text("metric-detect", formatNumber(tracking.detect_ms, 0));
   text(
     "metric-position",
@@ -1236,6 +1351,8 @@ function renderState(state) {
   const video = monitor?.video || {};
   const sync = monitor?.synchronization || {};
   const config = monitor?.config || {};
+  const modelPath = String(config.model || "");
+  const modelName = modelDisplayName(modelPath);
 
   ensureTelemetryStream(monitor);
   // The 300 ms state poll can lag several packets behind the 30 Hz SSE
@@ -1244,16 +1361,23 @@ function renderState(state) {
   // two live samples.
   renderLiveTelemetry(tracking, video, config, Date.now(), false);
 
+  text("active-model-chip", `AI · ${modelIdFromPath(modelPath)}`);
+  text("status-model", modelIdFromPath(modelPath));
+  text(
+    "status-confidence",
+    Number.isFinite(Number(tracking.quality))
+      ? `${Number(tracking.quality).toFixed(1)}%`
+      : "—",
+  );
+  text(
+    "status-threshold",
+    Number.isFinite(Number(config.valid_confidence))
+      ? `${(Number(config.valid_confidence) * 100).toFixed(0)}%`
+      : "—",
+  );
   text("status-measured", boolLabel(tracking.measured, "检测到", "未检测"));
   text("status-valid", boolLabel(tracking.valid, "有效", "无效"));
-  const aiMode = config.algorithm === "ai";
-  text("status-reference-label", aiMode ? "坐标参考" : "管道姿态");
-  text(
-    "status-pipe",
-    aiMode
-      ? "固定安装标定"
-      : boolLabel(tracking.pipe_valid, "稳定", "失效"),
-  );
+  text("status-pipe", "固定安装标定");
   text("status-lateral", tracking.lateral_px == null ? "—" : `${formatNumber(tracking.lateral_px, 1)} px`);
   text("status-error", tracking.error_px == null ? "—" : `${formatNumber(tracking.error_px, 1)} px`);
   text("status-sync", sync.match_delta_ms == null ? "—" : `${formatNumber(sync.match_delta_ms, 1)} ms`);
@@ -1269,9 +1393,12 @@ function renderState(state) {
   text("analysis-fps", Number.isFinite(Number(analysis.detector_fps_mean)) ? `${Number(analysis.detector_fps_mean).toFixed(1)} FPS` : "—");
   text("analysis-delay", Number.isFinite(Number(analysis.video_latency_p50_ms)) ? `${Number(analysis.video_latency_p50_ms).toFixed(1)} ms` : "—");
   text("system-ip", state.device_ip);
+  text("system-model", modelIdFromPath(modelPath));
   text("system-process", running ? `PID ${device.process?.pid || "—"}` : "已停止");
   text("system-release", device.current_release || "—");
   text("system-hash", device.source_hash ? `${device.source_hash.slice(0, 16)}…` : "—");
+  text("current-model-name", modelName);
+  text("current-model-path", modelPath || "—");
 
   const operationBadge = $("#operation-state");
   const operationRunning = operation.state === "running";
@@ -1300,14 +1427,14 @@ function renderState(state) {
     button.disabled = operationRunning;
   });
 
-  const fingerprint = JSON.stringify(config);
+  const aiConfigReady = Boolean(monitor?.config?.model);
+  for (const control of ui.form.elements) {
+    control.disabled = operationRunning || !aiConfigReady;
+  }
+
+  const fingerprint = JSON.stringify([config, device.models || []]);
   if (!formDirty && fingerprint !== configFingerprint) {
-    for (const input of ui.form.elements) {
-      if (!input.name) continue;
-      const available = config[input.name] != null;
-      input.disabled = config.algorithm === "v2" && !available;
-      input.value = available ? config[input.name] : "";
-    }
+    syncAIForm(config, device.models || []);
     configFingerprint = fingerprint;
   }
   const configCommand = monitor?.last_command;
@@ -1317,7 +1444,11 @@ function renderState(state) {
     else if (configCommand.state === "rejected" || configCommand.state === "ack_timeout") setVerdict(configBadge, "应用失败", "bad");
     else if (configCommand.state === "waiting_for_device_ack") setVerdict(configBadge, "等待确认", "warning");
   } else if (!formDirty) {
-    setVerdict(configBadge, "设备值", "neutral");
+    setVerdict(
+      configBadge,
+      aiConfigReady ? "设备值" : "等待设备",
+      "neutral",
+    );
   }
 }
 
@@ -1424,17 +1555,74 @@ $$("[data-chart-expand]").forEach((button) => {
   });
 });
 
-ui.form.addEventListener("input", () => {
-  formDirty = true;
-  setVerdict($("#config-state"), "未应用", "warning");
+function aiFormMatchesDevice() {
+  const config = latestState?.monitor?.config;
+  if (!config || !config.model) return false;
+  return (
+    String(ui.modelSelect.value || "") === String(config.model) &&
+    Number(ui.confidenceSlider.value) ===
+      Math.round(Number(config.confidence) * 100) &&
+    Number(ui.targetPercent.value) ===
+      Math.round(Number(config.target_position) * 100) &&
+    Number(ui.iouPercent.value) === Math.round(Number(config.iou) * 100) &&
+    Number(ui.coastFrames.value) === Math.round(Number(config.coast_frames))
+  );
+}
+
+function markAIFormDirty() {
+  formDirty = !aiFormMatchesDevice();
+  setVerdict(
+    $("#config-state"),
+    formDirty ? "未应用" : "设备值",
+    formDirty ? "warning" : "neutral",
+  );
+}
+
+ui.confidenceSlider.addEventListener("input", () => {
+  setConfidencePercent(ui.confidenceSlider.value);
+});
+
+ui.form.addEventListener("input", markAIFormDirty);
+ui.form.addEventListener("change", markAIFormDirty);
+
+$$("[data-confidence-preset]").forEach((button) => {
+  button.addEventListener("click", () => {
+    setConfidencePercent(button.dataset.confidencePreset);
+    markAIFormDirty();
+  });
 });
 
 ui.form.addEventListener("submit", async (event) => {
   event.preventDefault();
-  const params = {};
-  for (const input of ui.form.elements) {
-    if (!input.name || input.value === "") continue;
-    params[input.name] = Number(input.value);
+  const threshold = clamp(
+    Number(ui.confidenceSlider.value) / 100,
+    0.01,
+    0.99,
+  );
+  const target = clamp(
+    Number(ui.targetPercent.value) / 100,
+    0.05,
+    0.95,
+  );
+  const iou = clamp(
+    Number(ui.iouPercent.value) / 100,
+    0.01,
+    0.99,
+  );
+  const coastFrames = clamp(
+    Math.round(Number(ui.coastFrames.value)),
+    0,
+    15,
+  );
+  const params = {
+    target_position: target,
+    confidence: threshold,
+    valid_confidence: threshold,
+    iou,
+    coast_frames: coastFrames,
+  };
+  if (ui.modelSelect.value) {
+    params.model = ui.modelSelect.value;
   }
   await requestAction("config", { params }, "参数已发送，等待设备确认");
   formDirty = false;
