@@ -164,6 +164,20 @@ class Stm32LinkTests(unittest.TestCase):
         self.assertEqual(ack["config"]["inner_kp"], 3.5)
         self.assertEqual(ack["config"]["speed_limit"], 30.0)
 
+    def test_successful_pid_ack_restores_stream_after_maix_restart(self):
+        serial = FakeSerial()
+        link = Stm32Link(serial)
+        link.send_pid_request("get")
+        serial.rx_chunks.append(
+            b"PA,1,0,26044,4600,10500,3500,0,2400,15000,"
+            b"30,50,0,0,0\n"
+        )
+
+        link.poll_commands()
+
+        self.assertTrue(link.streaming)
+        self.assertEqual(len(link.drain_pid_acks()), 1)
+
     def test_q9_parser_exposes_raw_and_scaled_angles(self):
         frame = parse_q9_line(self.Q9_LINE)
         self.assertEqual(frame["seq"], 17)

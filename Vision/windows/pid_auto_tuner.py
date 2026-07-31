@@ -130,14 +130,30 @@ def score_inner(samples, speed_limit):
 
 
 def score_outer(samples, angle_limit):
-    rows = _valid_v2(samples, 2)
+    rows = []
+    tracking_valid = []
+    for sample in samples:
+        feedback = sample.get("feedback", sample)
+        if (
+            feedback.get("feedback_version") == 2
+            and feedback.get("tuning_mode") == 2
+        ):
+            rows.append(feedback)
+            tracking = sample.get("tracking")
+            tracking_valid.append(
+                not (
+                    isinstance(tracking, dict)
+                    and tracking.get("valid") is False
+                )
+            )
     if len(rows) < 10:
         raise ValueError("outer test has fewer than 10 F2 samples")
     valid = [
         row
-        for row in rows
+        for row, vision_valid in zip(rows, tracking_valid)
         if row.get("position_valid") == 1
         and row.get("vision_age_ms", 999999) <= 200
+        and vision_valid
     ]
     if len(valid) < 8:
         raise ValueError("outer test has insufficient vision/position data")

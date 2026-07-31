@@ -194,11 +194,100 @@ def _run_pid_auto(args):
         raise RuntimeError("STM32 PID ACK is missing {}".format(missing))
 
     targets = (float(args.target), -float(args.target))
+    recenter_duration = max(5.0, min(8.0, 2.0 * float(args.duration)))
+    outer_center_duration = max(
+        8.0, min(12.0, 2.5 * float(args.duration))
+    )
+
+    def recenter_rod():
+        last_angle = None
+        for _attempt in range(2):
+            _ack, samples = _run_pid_test(
+                args.url, "inner", 0.0, recenter_duration
+            )
+            angles = []
+            for sample in samples:
+                feedback = sample.get("feedback") or {}
+                if (
+                    feedback.get("feedback_version") == 2
+                    and feedback.get("tuning_mode") == 1
+                    and feedback.get("position_valid") == 1
+                ):
+                    angles.append(float(feedback["actual_rod_angle_deg"]))
+            if angles:
+                tail = angles[-min(5, len(angles)) :]
+                last_angle = sum(tail) / float(len(tail))
+                if abs(last_angle) <= 0.35:
+                    return round(last_angle, 5)
+        raise RuntimeError(
+            "inner recenter did not reach +/-0.35 deg (last={})".format(
+                last_angle
+            )
+        )
+
+    def center_ball():
+        last_error_rms = None
+        last_velocity_rms = None
+        for _attempt in range(2):
+            _ack, samples = _run_pid_test(
+                args.url, "outer", 0.0, outer_center_duration
+            )
+            rows = []
+            for sample in samples:
+                feedback = sample.get("feedback") or {}
+                tracking = sample.get("tracking")
+                if (
+                    feedback.get("feedback_version") == 2
+                    and feedback.get("tuning_mode") == 2
+                    and feedback.get("position_valid") == 1
+                    and feedback.get("vision_age_ms", 999999) <= 200
+                    and not (
+                        isinstance(tracking, dict)
+                        and tracking.get("valid") is False
+                    )
+                ):
+                    rows.append(feedback)
+            if len(rows) < 10:
+                continue
+            tail = rows[-max(10, int(round(0.25 * len(rows)))) :]
+            errors = [float(row["control_error_px"]) for row in tail]
+            velocities = [float(row["velocity_px_s"]) for row in tail]
+            last_error_rms = (
+                sum(value * value for value in errors) / len(errors)
+            ) ** 0.5
+            last_velocity_rms = (
+                sum(value * value for value in velocities) / len(velocities)
+            ) ** 0.5
+            if last_error_rms <= 25.0 and last_velocity_rms <= 80.0:
+                return {
+                    "start_position_error_rms_px": round(last_error_rms, 5),
+                    "start_velocity_rms_px_s": round(last_velocity_rms, 5),
+                    "start_angle_deg": round(
+                        sum(
+                            float(row["actual_rod_angle_deg"])
+                            for row in tail
+                        )
+                        / len(tail),
+                        5,
+                    ),
+                }
+        raise RuntimeError(
+            "outer centering did not settle "
+            "(error_rms={}, velocity_rms={}); check that the ball is present".format(
+                last_error_rms, last_velocity_rms
+            )
+        )
+
+    def prepare_start():
+        if args.stage == "outer":
+            return center_ball()
+        return {"start_angle_deg": recenter_rod()}
 
     def evaluator(config):
         _submit(args.url, "/pid/set", {"params": config})
         runs = []
         for target in targets:
+            start_state = prepare_start()
             _ack, samples = _run_pid_test(
                 args.url, args.stage, target, args.duration
             )
@@ -207,6 +296,7 @@ def _run_pid_auto(args):
             else:
                 metrics = score_outer(samples, config["angle_limit"])
             metrics["target"] = target
+            metrics.update(start_state)
             runs.append(metrics)
         return {
             "score": sum(run["score"] for run in runs) / len(runs),
@@ -223,12 +313,18 @@ def _run_pid_auto(args):
         final_ack = _submit(
             args.url, "/pid/set", {"params": result["best_config"]}
         )
+        final_recenter_angle = recenter_rod()
         result.update(
             {
                 "stage": args.stage,
                 "initial_config": initial,
                 "final_ack": final_ack,
                 "duration_s": args.duration,
+                "recenter_duration_s": recenter_duration,
+                "outer_center_duration_s": (
+                    outer_center_duration if args.stage == "outer" else None
+                ),
+                "final_recenter_angle_deg": final_recenter_angle,
                 "targets": list(targets),
                 "completed_epoch_ns": time.time_ns(),
             }

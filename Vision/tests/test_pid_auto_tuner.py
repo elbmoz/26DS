@@ -57,6 +57,28 @@ class PidAutoTunerTests(unittest.TestCase):
             score_outer(rows(20.0), 5.0)["score"],
         )
 
+    def test_outer_score_counts_lost_tracking_as_invalid(self):
+        samples = [
+            {
+                "tracking": {"valid": index % 4 != 0},
+                "feedback": {
+                    "feedback_version": 2,
+                    "tuning_mode": 2,
+                    "position_valid": 1,
+                    "vision_age_ms": 20,
+                    "control_error_px": 0.0,
+                    "velocity_px_s": 0.0,
+                    "target_rod_angle_deg": 0.0,
+                    "protection_state": 0,
+                },
+            }
+            for index in range(40)
+        ]
+
+        metrics = score_outer(samples, 5.0)
+
+        self.assertEqual(metrics["invalid_ratio"], 0.25)
+
     def test_coordinate_search_keeps_best_candidate(self):
         result = coordinate_search(
             {"inner_kp": 1.0},

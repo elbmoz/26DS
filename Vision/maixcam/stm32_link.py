@@ -466,6 +466,8 @@ class Stm32Link:
                 self.pid_ack_error_count += 1
                 return
             self.pid_config = dict(ack["config"])
+            if ack["ok"]:
+                self.streaming = True
             self.pid_ack_queue.append(ack)
             self.pid_ack_count += 1
             return
@@ -588,8 +590,8 @@ class Stm32Link:
 
     def send_pid_request(self, action, params=None):
         """Forward one Windows PID operation to STM32 and return MCU seq."""
-        if self.serial_port is None or not self.streaming:
-            raise RuntimeError("STM32 Question 2 stream is not active")
+        if self.serial_port is None:
+            raise RuntimeError("STM32 UART is unavailable")
         params = dict(params or {})
         self.pid_request_sequence = (
             self.pid_request_sequence + 1

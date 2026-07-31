@@ -194,8 +194,8 @@ def main():
                 else:
                     print(
                         "runtime config rejected:",
-                        event["request_id"],
-                        event["errors"],
+                        event.get("request_id", "unknown"),
+                        event.get("errors", event.get("error", "unknown error")),
                     )
 
             try:

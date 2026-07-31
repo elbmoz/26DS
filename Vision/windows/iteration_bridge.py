@@ -29,7 +29,18 @@ def _write_json_atomic(path, value):
         json.dumps(value, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
-    os.replace(temporary, path)
+    for attempt in range(10):
+        try:
+            os.replace(temporary, path)
+            return True
+        except PermissionError:
+            if attempt < 9:
+                time.sleep(0.01)
+    try:
+        temporary.unlink()
+    except OSError:
+        pass
+    return False
 
 
 class _BridgeServer(ThreadingHTTPServer):
