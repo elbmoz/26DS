@@ -11,7 +11,7 @@ record_tracking.py 和 Vision/tests/test_stm32_link.py，再实施修改。
 
 目标：
 - 继续使用当前连接 MaixCAM 与 STM32 的同一个 UART，115200、8N1。
-- 接收 STM32 以 5 Hz 发送的任务 9 ASCII 遥测帧。
+- 接收 STM32 以 50 Hz 发送的任务 9 ASCII 遥测帧。
 - 在视觉端画面叠加显示电机位置和三轴相对角度。
 - 不修改球识别、管道识别、ROI、滤波、速度估计和相机参数。
 - 不改变现有 c2/ok/B/none 第二题协议和行为。

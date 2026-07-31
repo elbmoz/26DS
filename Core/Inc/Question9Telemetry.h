@@ -7,7 +7,7 @@ extern "C" {
 
 #include "stm32f4xx_hal.h"
 
-#define QUESTION9_TELEMETRY_PERIOD_MS    200U
+#define QUESTION9_TELEMETRY_PERIOD_MS     20U
 
 /*
  * USART6 outbound telemetry for Question 9:

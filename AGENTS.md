@@ -42,12 +42,19 @@ Preprocessor defines: `USE_HAL_DRIVER;STM32F407xx`
    address `0x03`. A dt-aware outer PID converts MaixCAM ball position and
    filtered velocity into a target rod angle; an inner proportional loop uses
    motor-position feedback to produce a bounded, slew-limited speed command.
+   The signed motor-to-rod fit is `-0.36450137 rod deg / motor deg`, derived
+   from the robust `a010e37` dataset; the horizontal motor angle is still
+   captured at Question 2 start because that dataset's absolute zero was
+   relative to one capture session. The fitted common target-angle ceiling is
+   `6.0` degrees and the protection limit is `6.5` degrees; first-loop tuning
+   currently restricts the target to `1.5` degrees, motor speed to `30`, slew
+   to `8`, and disables both outer integral gains.
    The current phase regulates to center (`target=0`); the later
    `+5 cm -> -5 cm` sequence has reserved pixel targets and a target setter.
 10. `MotorPositionMonitor.c/.h` — Shared non-blocking `0x36` position reader
-    for Questions 2 and 9. Question 2 selects a faster configurable period for
-    rod-angle feedback; Question 9 retains the 100 ms diagnostic default.
-11. `Question9Telemetry.c/.h` — Isolated 5 Hz non-blocking Question 9
+    for Questions 2 and 9. Each task selects its own period; Question 9 uses
+    20 ms for 50 Hz calibration sampling without changing Question 2.
+11. `Question9Telemetry.c/.h` — Isolated 50 Hz non-blocking Question 9
     telemetry sender on USART6. It emits `Q9,...\n` frames containing motor
     position, zero-relative three-axis angles, validity and motion status.
 12. `DS_task.c/.h` — Question selection and start state machine. Question 1
@@ -75,8 +82,8 @@ or a calibrated zero. Do not remove, invert or retune this command unless the
 mechanical startup requirement explicitly changes. Question 9 collects motion,
 motor-position and IMU telemetry after this pre-positioning, but it must not
 write Question 2 zero, linkage-ratio, direction or controller parameters.
-Question 2 calibration values are filled only after the user uploads captured
-data and the offline analysis is complete.
+Question 2 calibration values may be changed only from a reviewed offline fit;
+the current signed ratio and direction settings come from commit `a010e37`.
 
 ## Question 9 Data-Collection Invariant
 
@@ -87,16 +94,18 @@ stable Question 9 start position; the current upper/lower values are
 `210`/`150`. After PB7 confirmation, the position monitor must first observe
 the power-on `+240` move and residual motion settle. Motor `0x03` then moves
 first to the upper endpoint and continuously crosses between the upper and
-lower endpoints at speed `50` and acceleration `10`. Do not reverse on a fixed
+lower endpoints at speed `50` and acceleration `20`. Do not reverse on a fixed
 timer: require observed
 position change followed by consecutive stable `0x36` samples, then keep the
 configured endpoint dwell. The crossing command uses the sum of both offsets
 so unequal amplitudes cannot accumulate drift. `Question9Telemetry` must keep
-sending the existing 13-field `Q9,...\n` frames at 5 Hz on USART6. Do not
+sending the existing 13-field `Q9,...\n` frames at 50 Hz on USART6 while the
+motor-position monitor also runs at 50 Hz. Keep roughly 300 ms of endpoint
+stability confirmation (`15` successful position updates at 20 ms). Do not
 remove this communication, collapse the two endpoint settings into one,
 replace the loop with a finite auto-calibration sequence, or let Question 9
 write any `balance_control_config` field. Captured data is uploaded and
-analyzed offline before Question 2 calibration values are entered.
+analyzed offline before reviewed results are manually entered into Question 2.
 
 ## Hardware Map
 

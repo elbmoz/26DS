@@ -5,71 +5,129 @@
 #include "MotorPositionMonitor.h"
 
 /*
- * The proven reference controller uses millimetres and millimetres/second.
- * These defaults apply the current 18.2 px/cm calibration so that its
- * 0.11/0.06/0.34 outer gains become degree-per-pixel gains. Mechanical zero,
- * linkage ratio and the RS485 speed conversion still require bench
- * calibration before unrestricted testing.
+ * ==================== 任务 2 首轮调试入口 ====================
+ *
+ * 调试顺序必须是：
+ *   1. 先调管道角度内环，让实际管道角稳定追踪目标管道角；
+ *   2. 再调小球位置外环，让小球回到目标位置；
+ *   3. 最后才恢复积分和调近中心/高速增益调度。
+ *
+ * Keil Watch 重点观察：
+ *   balance_control_state.target_rod_angle_deg  外环给出的目标管道角
+ *   balance_control_state.rod_angle_deg         拟合得到的实际管道角
+ *   balance_control_state.angle_error_deg       内环角度误差
+ *   balance_control_state.motor_command         最终电机速度命令
+ *
+ * 提交 a010e37 已完成电机位置到管道 X 角的比例和方向标定。
+ * 这些拟合参数不要当 PID 参数随意修改。
  */
 BalanceControlConfig balance_control_config = {
-    .outer_kp_deg_per_px = 0.06044f,
-    .outer_ki_deg_per_px_s = 0.03297f,
-    .outer_kd_deg_per_px_s = 0.18681f,
-    .outer_integral_limit_px_s = 109.2f,
-    .outer_angle_limit_deg = 7.2f,
+    /*
+     * ---------- 第二阶段：小球位置外环 ----------
+     *
+     * 首轮只调 Kp、Kd，Ki 保持 0：
+     * - 回中太慢：小幅增大 Kp；
+     * - 冲过中心、低频往复：减小 Kp 或增大 Kd；
+     * - 电机被速度噪声带着抖：减小 Kd；
+     * - P/D 稳定后仍有固定静差，最后才逐步增加 Ki。
+     */
+    .outer_kp_deg_per_px = 0.02f,       /* 位置 P：误差每 1 px 产生的角度。 */
+    /* 首轮为 0；P/D 调稳后可从参考候选 0.03297 开始小步增加。 */
+    .outer_ki_deg_per_px_s = 0.0f,      /* 位置 I：用于消除固定静差。 */
+    .outer_kd_deg_per_px_s = 0.05f,     /* 速度 D：使用 -Kd*球速抑制冲过中心。 */
+    .outer_integral_limit_px_s = 109.2f, /* 限制积分累积，防止积分饱和。 */
+    /*
+     * 当前值允许 ±5.5°目标管道角；最终不得超过拟合得到的
+     * ±6.0°公共安全范围。首次排查方向时应临时调低到约 1～2°。
+     */
+    .outer_angle_limit_deg = 5.5f,
 
-    .hold_band_px = 18.2f,
-    .fine_band_px = 3.64f,
-    .fine_velocity_px_s = 18.2f,
-    .soft_kp_scale = 0.55f,
-    .soft_kd_scale = 0.75f,
-    .soft_angle_limit_scale = 0.65f,
-    .soft_ki_deg_per_px_s = 0.10989f,
-    .fine_fast_kp_scale = 0.25f,
-    .fine_fast_ki_scale = 0.50f,
-    .fine_fast_angle_limit_scale = 0.40f,
-    .hold_integral_decay = 0.70f,
-    .fine_hold_inner_kp_scale = 0.60f,
+    /* 近中心增益调度：内外环基础调通前先不要修改这一组。 */
+    .hold_band_px = 18.2f,              /* 误差进入 ±18.2 px 后使用柔化参数。 */
+    .fine_band_px = 3.64f,              /* 误差进入 ±3.64 px 后考虑回水平。 */
+    .fine_velocity_px_s = 18.2f,        /* 精细区内低于此球速才强制回水平。 */
+    .soft_kp_scale = 0.55f,             /* 柔化区把基础 Kp 乘 0.55。 */
+    .soft_kd_scale = 0.75f,             /* 柔化区把基础 Kd 乘 0.75。 */
+    .soft_angle_limit_scale = 0.65f,    /* 柔化区把目标角限幅乘 0.65。 */
+    /* 首轮为 0；外环稳定后可从参考候选 0.10989 以下逐步增加。 */
+    .soft_ki_deg_per_px_s = 0.0f,       /* 柔化区单独使用的 Ki，不是基础 Ki 倍率。 */
+    .fine_fast_kp_scale = 0.25f,        /* 精细区但球速较快时的 Kp 倍率。 */
+    .fine_fast_ki_scale = 0.50f,        /* 精细区高速时把 soft Ki 再乘 0.50。 */
+    .fine_fast_angle_limit_scale = 0.40f, /* 精细区高速时的限幅倍率。 */
+    .hold_integral_decay = 0.70f,       /* 回水平保持时每帧保留 70% 积分。 */
+    .fine_hold_inner_kp_scale = 0.60f,  /* 回水平保持时把角度内环 Kp 乘 0.60。 */
 
-    .damping_velocity_px_s = 50.96f,
-    .damping_kp_scale = 0.55f,
-    .damping_kd_scale = 1.80f,
-    .damping_angle_limit_scale = 0.70f,
-    .freeze_integral_velocity_px_s = 81.90f,
-    .freeze_kp_scale = 0.70f,
-    .freeze_kd_scale = 1.40f,
-    .freeze_angle_limit_scale = 0.75f,
-    .freeze_integral_decay = 0.90f,
-
-    .motor_zero_angle_deg = 0.0f,
-    .rod_angle_per_motor_degree = 1.0f,
-    .rod_angle_limit_deg = 10.0f,
-    .capture_motor_zero_on_start = 1U,
+    /* 高球速阻尼调度：基础外环调通前先保持默认，不作为首要调参项。 */
+    .damping_velocity_px_s = 50.96f,    /* 达到该球速后开始减 P、增 D。 */
+    .damping_kp_scale = 0.55f,          /* 高速阻尼区把当前 Kp 乘 0.55。 */
+    .damping_kd_scale = 1.80f,          /* 高速阻尼区把当前 Kd 乘 1.80。 */
+    .damping_angle_limit_scale = 0.70f, /* 高速阻尼区把当前限幅乘 0.70。 */
+    .freeze_integral_velocity_px_s = 81.90f, /* 达到该球速后关闭本帧积分。 */
+    .freeze_kp_scale = 0.70f,           /* 冻结区把已调度 Kp 再乘 0.70。 */
+    .freeze_kd_scale = 1.40f,           /* 冻结区把已调度 Kd 再乘 1.40。 */
+    .freeze_angle_limit_scale = 0.75f,  /* 冻结区把已调度限幅再乘 0.75。 */
+    .freeze_integral_decay = 0.90f,     /* 冻结时每帧保留 90% 历史积分。 */
 
     /*
-     * With a direct linkage and protocol unit 10 ~= 1 RPM, 9.2 speed units
-     * per degree gives approximately the reference inner-loop response.
+     * ---------- 已完成标定：不要当 PID 调 ----------
+     *
+     * a010e37 稳态拟合：
+     *   管道X角 = -0.0020022658 * 电机原始位置 + 截距
+     *
+     * 六字节 0x36 回包在底层换算为：
+     *   电机角 = 电机原始位置 * 360 / 65536
+     *
+     * 所以：
+     *   管道角/电机角 = -0.36450137
+     *
+     * 数据里的 P=5025.92 只对应那次相对 IMU 零点，不能跨上电复用。
+     * 每次进入任务 2 前必须先把管道物理调平，再捕获本次水平锚点。
      */
-    .angle_kp_speed_per_deg = 9.2f,
-    .motor_speed_limit = 180.0f,
-    .motor_speed_deadband = 1.0f,
-    .motor_min_speed = 4.0f,
-    .motor_slew_per_update = 16.0f,
+    .motor_zero_angle_deg = 0.0f,       /* 本次管道水平对应的电机角。 */
+    .rod_angle_per_motor_degree = -0.36450137f, /* 实测带符号传动比例。 */
+    .rod_angle_limit_deg = 6.5f,        /* 超过该实际管道角时强制回水平。 */
+    .capture_motor_zero_on_start = 1U,  /* 1：启动后首个有效位置作为水平零点。 */
+
+    /*
+     * ---------- 第一阶段：管道角度内环 ----------
+     *
+     * 首轮主要调以下五项：
+     * - angle_kp_speed_per_deg：追角力度。追得慢就增大，来回摆就减小；
+     * - motor_speed_limit：最大速度。首轮限制为 30，确认安全后再放宽；
+     * - motor_slew_per_update：每周期速度变化。越小越柔和；
+     * - motor_min_speed：克服静摩擦的最小速度；
+     * - motor_speed_deadband：目标附近的停车死区。
+     */
+    .angle_kp_speed_per_deg = 5.5f,     /* 角度误差每 1°产生的速度命令。 */
+    .motor_speed_limit = 30.0f,         /* 最终速度命令绝对值不得超过 30。 */
+    .motor_speed_deadband = 0.0f,       /* 连续速度落入该死区时命令为 0。 */
+    .motor_min_speed = 0.0f,            /* 非零命令不足该值时向上补偿。 */
+    .motor_slew_per_update = 2.0f,      /* 每 20 ms 最多改变 2 个速度命令单位。 */
+    /*
+     * F6 驱动器加减速档。0 表示直接启停/换向；非零时数值越大加减速越快。
+     * 速度命令实际对应 1 RPM 还是 0.1 RPM，取决于驱动器 S_Vel_IS 设置。
+     */
     .motor_slope = 0U,
-    .tilt_direction = -1,
-    .motor_direction = 1,
+    /*
+     * 已完成的符号标定：
+     * 正电机命令使 P 增大、管道 X 角减小，所以内环方向必须为 -1。
+     * 正电机命令又会让球向画面左侧移动，所以外环倾斜方向必须为 +1。
+     * 这两个方向和负的角度比例是配套的，不要只翻转其中一项。
+     */
+    .tilt_direction = 1,                /* 外环输出到目标管道角的符号。 */
+    .motor_direction = -1,              /* 角度误差到电机命令的符号。 */
 
-    .control_period_ms = 20U,
-    .motor_position_period_ms = 20U,
-    .motor_position_timeout_ms = 60U,
+    .control_period_ms = 20U,           /* 任务 2 内外环计算周期：50 Hz。 */
+    .motor_position_period_ms = 20U,    /* 0x36 电机位置查询周期：50 Hz。 */
+    .motor_position_timeout_ms = 60U,   /* 连续 60 ms 没有新位置就停机。 */
 
-    .stable_error_px = 18.2f,
-    .stable_velocity_px_s = 25.0f,
-    .stable_frames = 25U,
+    .stable_error_px = 18.2f,           /* 稳定时允许的位置误差：约 1 cm。 */
+    .stable_velocity_px_s = 25.0f,      /* 稳定时允许的最大球速。 */
+    .stable_frames = 25U,               /* 连续 25 个视觉帧满足条件才判稳定。 */
 
-    .pixels_per_cm = 18.2f,
-    .positive_5cm_target = 91.0f,
-    .negative_5cm_target = -91.0f
+    .pixels_per_cm = 18.2f,             /* 当前视觉标定：每厘米 18.2 px。 */
+    .positive_5cm_target = 91.0f,       /* 后续阶段预留的 +5 cm 目标。 */
+    .negative_5cm_target = -91.0f       /* 后续阶段预留的 -5 cm 目标。 */
 };
 
 BalanceControlState balance_control_state;

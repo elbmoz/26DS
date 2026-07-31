@@ -26,8 +26,9 @@ MaixCAM 球位置/球速度
 控制计算完成后再推进非阻塞 `0x36` 查询，避免位置请求占用 USART1 时始终
 无法发送速度命令。
 
-题目 2 使用 `motor_position_period_ms` 指定位置读取周期；题目 9 继续使用
-`MOTOR_POSITION_MONITOR_PERIOD_MS=100 ms` 的诊断周期。
+题目 2 使用 `motor_position_period_ms` 指定位置读取周期；题目 9 独立使用
+`DS_TASK_Q9_POSITION_PERIOD_MS=20 ms`，以 50 Hz 采集标定位置，不改变
+题目 2 参数。
 
 ## 任务流程
 
@@ -50,9 +51,38 @@ BalanceControl_SetTarget(balance_control_config.negative_5cm_target);
 
 当前视觉标定为 `18.2 px/cm`，预留目标为 `+91 px` 和 `-91 px`。
 
-> `capture_motor_zero_on_start=1` 假定进入题目 2 时杆已经物理调平。它只是
-> 临时调试方案，不是机械回零。完成零点标定后应写入
-> `motor_zero_angle_deg` 并把自动捕获关闭。
+### 已应用的电机位置—管道角拟合
+
+Git 提交 `a010e37` 的稳态内点给出：
+
+```text
+rod_x_deg = -0.0020022658 * motor_position + intercept
+```
+
+当前硬件使用六字节 `0x36` 回包，底层换算为：
+
+```text
+motor_angle_deg = motor_position * 360 / 65536
+```
+
+因此任务 2 使用：
+
+```text
+rod_angle_per_motor_degree
+    = -0.0020022658 / (360 / 65536)
+    = -0.36450137
+```
+
+拟合的 RMSE 为 `0.179°`、R² 为 `0.999308`，验证范围为原始位置
+`1817..9207`、管道 X 角 `-8.6..+6.6°`。正反向零点差等效约 `0.114°`，
+当前不增加回差补偿。为了在两侧都留在拟合范围内，外环目标角限幅设为
+最终不超过 `6.0°`，管道角软件保护限幅设为 `6.5°`。首轮内外环调试期间
+进一步把目标角限制为 `1.5°`。
+
+该数据中的零角位置 `P=5025.92` 来自当次采集的相对 IMU 零点，不能作为
+跨上电机械零点。因此继续保持 `capture_motor_zero_on_start=1`：进入题目 2
+前必须先把管道物理调平，首次有效电机角度作为本次水平锚点。只有增加可重复
+的机械回零基准后，才应固定 `motor_zero_angle_deg` 并关闭自动捕获。
 
 ## 串口与控制反馈
 
@@ -107,18 +137,17 @@ motor_speed =
     * angle_error_deg
 ```
 
-当前已知关系是“正电机命令让球向视觉左侧运动”，因此默认：
+当前已知关系是“正电机命令让球向视觉左侧运动”，且拟合证明正命令使
+电机位置增大、管道 X 角减小，因此当前方向为：
 
 ```text
-tilt_direction  = -1
-motor_direction = +1
+tilt_direction  = +1
+motor_direction = -1
 ```
 
-球位于右侧时，位置误差为负，外环输出为负，经 `tilt_direction=-1`
-得到正目标杆角，内环发出正电机命令。若电机正命令与位置读数的增量方向不
-一致，修改 `motor_direction`；若杆角正方向与球滚动关系相反，修改
-`tilt_direction` 或带符号的 `rod_angle_per_motor_degree`。不要同时修改
-多个方向参数。
+球位于右侧时位置误差为负，经 `tilt_direction=+1` 得到负 X 目标角；
+`motor_direction=-1` 随后发出正电机命令，使管道 X 角减小并让球向左回中。
+不要再用旧方向组合覆盖这三个已经配套的符号参数。
 
 ## 从参考工程迁移的调度逻辑
 
@@ -143,14 +172,14 @@ motor_direction = +1
 | 参数 | 当前默认值 | 单位/作用 |
 |---|---:|---|
 | `outer_kp_deg_per_px` | 0.06044 | 位置 P，deg/px |
-| `outer_ki_deg_per_px_s` | 0.03297 | 位置积分，deg/(px·s) |
+| `outer_ki_deg_per_px_s` | 0 | 首轮关闭；P/D 稳定后可从参考候选 0.03297 小步增加 |
 | `outer_kd_deg_per_px_s` | 0.18681 | 视觉速度 D，deg/(px/s) |
 | `outer_integral_limit_px_s` | 109.2 | 积分限幅，px·s |
-| `outer_angle_limit_deg` | 7.2 | 外环最大目标杆角 |
+| `outer_angle_limit_deg` | 1.5 | 首轮低风险目标角限幅；最终上限 6.0° |
 | `hold_band_px` | 18.2 | 约等于离目标 1 cm |
 | `fine_band_px` | 3.64 | 约等于离目标 2 mm |
 | `fine_velocity_px_s` | 18.2 | 精细区回水平速度阈值 |
-| `soft_ki_deg_per_px_s` | 0.10989 | 近中心专用积分 |
+| `soft_ki_deg_per_px_s` | 0 | 首轮关闭；后续从参考候选 0.10989 以下逐步增加 |
 | `damping_velocity_px_s` | 50.96 | 开始高速阻尼 |
 | `freeze_integral_velocity_px_s` | 81.90 | 冻结积分速度 |
 
@@ -162,21 +191,21 @@ motor_direction = +1
 | 参数 | 当前默认值 | 作用 |
 |---|---:|---|
 | `motor_zero_angle_deg` | 0 | 标定后的电机水平零点 |
-| `rod_angle_per_motor_degree` | 1.0 | 电机角到实际杆角的带符号比例 |
-| `rod_angle_limit_deg` | 10.0 | 杆角软件保护范围 |
+| `rod_angle_per_motor_degree` | -0.36450137 | 拟合得到的电机角到管道 X 角带符号比例 |
+| `rod_angle_limit_deg` | 6.5 | 管道角软件保护范围，保留约 0.5°跟踪余量 |
 | `capture_motor_zero_on_start` | 1 | 首个有效位置作为临时零点 |
 | `angle_kp_speed_per_deg` | 9.2 | 角度内环 P |
-| `motor_speed_limit` | 180 | RS485 最大速度命令，约 18 RPM |
+| `motor_speed_limit` | 30 | 首轮 RS485 最大速度命令，约 3 RPM |
 | `motor_speed_deadband` | 1 | 小于等于该值视为停止 |
 | `motor_min_speed` | 4 | 非零时的最小命令 |
-| `motor_slew_per_update` | 16 | 每个控制周期最大速度变化 |
+| `motor_slew_per_update` | 8 | 首轮每个控制周期最大速度变化 |
 | `motor_slope` | 0 | 电机驱动器速度模式斜率字段 |
 | `control_period_ms` | 20 ms | 串级控制周期 |
 | `motor_position_period_ms` | 20 ms | 题目 2 的 0x36 查询周期 |
 | `motor_position_timeout_ms` | 60 ms | 位置失效停机阈值 |
 
-`angle_kp_speed_per_deg=9.2` 假设电机速度协议约 `10≈1 RPM` 且杆与电机
-直接连接，用来近似参考工程的角度内环响应。存在减速机构时必须重新计算。
+`angle_kp_speed_per_deg=9.2` 仍只是参考工程响应的初始值；角度比例已经
+按实测传动关系更新，但角度内环 P、速度限幅和 slew 仍需实车逐步调试。
 
 稳定判定使用 `stable_error_px=18.2`、`stable_velocity_px_s=25` 和
 `stable_frames=25`。计数单位是新的视觉帧，50 Hz 时约需连续 0.5 秒。
@@ -199,31 +228,24 @@ TIME:0000.0s
 
 ## 首次标定和调试顺序
 
-1. 题目 9 在独立可调的上、下端点之间循环采集，不执行自动标定，也不修改
-   `balance_control_config`。记录 `DS_TASK_Q9_UPPER_PULSES`、
-   `DS_TASK_Q9_LOWER_PULSES`、IMU 安装方向、杆初始姿态和机械连接方式。
-2. 确认启动后，题目 9 会先等待初始电机位置稳定，再记录 IMU 相对零点；
-   每次必须检测到位置变化并等待连续稳定位置更新后，才在端点停留并反向，
-   不使用可能提前截断运动的固定反向周期。
-3. 采集多个完整往复周期并保存 USART6 的 `Q9` 遥测；上传数据后，根据电机
-   位置、三轴姿态、运动方向和时间序列离线分析水平零点、有效倾角轴、带符号
-   传动比和回差。
-4. 数据分析完成前不要根据单次观察写死题目 2 参数。分析后再填写
-   `motor_zero_angle_deg`、`rod_angle_per_motor_degree`、
-   `motor_direction` 及必要的控制限幅，然后不放球启动题目 2，确认
-   `P:X` 很快变为 `P:V`，实际杆角 `A` 接近 0°。
-5. 首次带球前把 `outer_angle_limit_deg` 临时降到约 1～2°、
-   `motor_speed_limit` 降到约 20～40，并确保有人随时按 PB7。
-6. 托住球制造小的正、负误差，分别确认目标杆角、实际杆角和电机命令方向。
-   方向错误时一次只修改一个方向参数。
-7. 先验证角度内环能快速追角且不振荡，再调球位置外环。
-8. 首轮外环调试可先把两个 Ki 参数设为 0，只调 P 和 D；确认没有持续偏差后
+1. 提交 `a010e37` 的拟合比例、方向和安全角度范围已经写入任务 2，不要再
+   恢复旧的 `1.0/-1/+1` 参数组合。
+2. 每次进入任务 2 前先把管道物理调平；启动后确认 `P:X` 很快变为
+   `P:V`，OLED 实际管道角 `A` 从接近 0°开始。
+3. 不放球、托住机构，小范围手动改变姿态，确认电机位置增大时 `A` 变负，
+   且显示角变化量与实际 X 角一致。
+4. 当前已经把 `outer_angle_limit_deg` 限制为 `1.5°`、`motor_speed_limit`
+   限制为 `30`、slew 限制为 `8`，并关闭两个积分；确保有人随时按 PB7。
+5. 托住球制造小的正、负误差，分别确认目标管道角、实际管道角和电机命令
+   方向；先核对接线、坐标和拟合数据，不要单独翻转某个已配套方向来掩盖问题。
+6. 先验证角度内环能快速追角且不振荡，再调球位置外环。
+7. 首轮外环调试可先把两个 Ki 参数设为 0，只调 P 和 D；确认没有持续偏差后
    再恢复小积分。
-9. 若球来回冲过中心，优先降低目标角限幅或 P，并检查视觉速度噪声，再调整
+8. 若球来回冲过中心，优先降低目标角限幅或 P，并检查视觉速度噪声，再调整
    D；若电机方向频繁跳变，降低 D 或增加速度滤波。
-10. 最后验证视觉 `none` 时杆能回水平，拔掉位置反馈时电机能在 60 ms 左右
+9. 最后验证视觉 `none` 时杆能回水平，拔掉位置反馈时电机能在 60 ms 左右
    停止，再逐步放开速度和角度限制。
-11. 两侧中心控制可靠后，再实现 `+5 cm -> -5 cm` 状态机。
+10. 两侧中心控制可靠后，再实现 `+5 cm -> -5 cm` 状态机。
 
 默认 stream 模式仍会把 `F` 帧保存到 `control.csv`。当前反馈能观察外环
 P/I/D 和最终电机命令；目标杆角、实际杆角、角度误差及位置更新时间可直接

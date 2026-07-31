@@ -518,7 +518,8 @@ static void DS_Task_StartQuestion9(void)
     ds_task_q9_angle_y = 0.0f;
     ds_task_q9_angle_z = 0.0f;
 
-    MotorPositionMonitor_Start();
+    MotorPositionMonitor_StartWithPeriod(
+        DS_TASK_Q9_POSITION_PERIOD_MS);
     Question9Telemetry_Start();
     DS_Task_ShowQuestion9();
 }
