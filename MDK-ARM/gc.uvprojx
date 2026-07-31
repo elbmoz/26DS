@@ -425,6 +425,26 @@
               <FilePath>..\Core\Inc\DS_task.h</FilePath>
             </File>
             <File>
+              <FileName>MotorPositionMonitor.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\MotorPositionMonitor.c</FilePath>
+            </File>
+            <File>
+              <FileName>MotorPositionMonitor.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Core\Inc\MotorPositionMonitor.h</FilePath>
+            </File>
+            <File>
+              <FileName>Question9Telemetry.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\Question9Telemetry.c</FilePath>
+            </File>
+            <File>
+              <FileName>Question9Telemetry.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Core\Inc\Question9Telemetry.h</FilePath>
+            </File>
+            <File>
               <FileName>BallVision.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\Core\Src\BallVision.c</FilePath>

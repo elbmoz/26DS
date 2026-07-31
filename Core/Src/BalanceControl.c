@@ -12,7 +12,7 @@
 BalanceControlConfig balance_control_config = {
     .kp = 0.012f,
     .ki = 0.0f,
-    .kd = 0.011f,
+    .kd = 0.008f,
     .integral_limit = 3000.0f,
     /*
      * Keep closed-loop motor output disabled while the bidirectional UART

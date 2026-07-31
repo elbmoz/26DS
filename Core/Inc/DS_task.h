@@ -9,12 +9,17 @@ extern "C" {
 
 #define DS_TASK_MAX_QUESTION          9U
 #define DS_TASK_DISPLAY_PERIOD_MS     200U
+#define DS_TASK_Q9_MOVE_PERIOD_MS     1000U
+#define DS_TASK_Q9_MOVE_PULSES        50
+#define DS_TASK_Q9_MOVE_SPEED         50U
+#define DS_TASK_Q9_MOVE_ACCELERATION  10U
 
 typedef enum
 {
     DS_TASK_MENU = 0,
     DS_TASK_RUNNING_Q1,
     DS_TASK_RUNNING_Q2,
+    DS_TASK_RUNNING_Q9,
     DS_TASK_FINISHED,
     DS_TASK_NOT_READY
 } DS_TaskState;

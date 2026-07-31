@@ -2,6 +2,7 @@
 
 #include "BallVision.h"
 #include "HWT101.h"
+#include "Question9Telemetry.h"
 #include "serial.h"
 #include "usart.h"
 #include "zhangdatou.h"
@@ -97,7 +98,10 @@ HAL_StatusTypeDef DS_Init(void)
     ds_state.ball_vision_valid = 0U;
     ds_state.ball_vision_frame_count = 0U;
     ds_state.ball_vision_last_rx_ms = 0U;
+    ds_state.roll_deg = 0.0f;
+    ds_state.pitch_deg = 0.0f;
     ds_state.yaw_deg = 0.0f;
+    ds_state.gyro_x_dps = 0.0f;
     ds_state.gyro_y_dps = 0.0f;
     ds_state.gyro_z_dps = 0.0f;
     ds_state.yaw_valid = 0U;
@@ -112,6 +116,7 @@ HAL_StatusTypeDef DS_Init(void)
 
     Serial_Init(&huart5);
     BallVision_Init(&huart6);
+    Question9Telemetry_Init(&huart6);
     HWT101_Init(&huart2);
 
     return HAL_OK;
@@ -134,7 +139,10 @@ void DS_Run(void)
     ds_state.uptime_ms += pending;
     ds_state.ir_raw_bits = DS_IR_ReadRaw();
     ds_state.ir_active_bits = DS_IR_ReadActive();
-    ds_state.yaw_deg = (float)global_angle;
+    ds_state.roll_deg = angle_x;
+    ds_state.pitch_deg = angle_y;
+    ds_state.yaw_deg = angle_z;
+    ds_state.gyro_x_dps = angular_velocity_x;
     ds_state.gyro_y_dps = angular_velocity_y;
     ds_state.gyro_z_dps = angular_velocity_z;
     ds_state.yaw_frame_count = hwt_yaw_frame_count;
@@ -377,6 +385,23 @@ HAL_StatusTypeDef DS_BalanceStop(void)
 HAL_StatusTypeDef DS_BalanceRequestPosition(void)
 {
     return Motor_RequestPositionUpdate(DS_BALANCE_MOTOR_ADDR);
+}
+
+HAL_StatusTypeDef DS_BalanceGetPositionRequestStatus(void)
+{
+    return Motor_GetLastComStatus();
+}
+
+void DS_BalanceCancelPositionRequest(void)
+{
+    Motor_CancelRequest();
+}
+
+uint8_t DS_BalanceGetLastPositionRx(uint8_t *buffer,
+                                    uint8_t buffer_length,
+                                    uint32_t *uart_error)
+{
+    return Motor_GetLastRxFrame(buffer, buffer_length, uart_error);
 }
 
 HAL_StatusTypeDef DS_BalanceReadPosition(int32_t *position, float *angle)

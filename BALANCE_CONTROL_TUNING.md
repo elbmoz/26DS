@@ -20,7 +20,7 @@ BalanceControl_SetTarget(balance_control_config.negative_5cm_target);
 当前标定约为 `18.2 px/cm`，所以两个预留目标为 `+91 px` 和 `-91 px`。
 
 当前固件已经启用平衡架速度输出。上电时 `main.c` 仍会单独发送一次
-`+300` 脉冲、速度 50、加速度 10 的相对位置命令；该动作不是回零，重复
+`+240` 脉冲、速度 50、加速度 10 的相对位置命令；该动作不是回零，重复
 复位会重复执行，实车上电前必须确认机械行程。
 
 ## 串口与数据符号
@@ -115,17 +115,17 @@ motor_command = Kp * vision_error
 |---|---:|---|
 | `kp` | 0.012 | 像素位置的主要回正力度 |
 | `ki` | 0 | 当前关闭积分 |
-| `kd` | 0.011 | 直接乘视觉速度，抑制冲过中心 |
+| `kd` | 0.008 | 直接乘视觉速度，抑制冲过中心 |
 | `pid_deadband` | 1 px | 中心位置死区 |
 | `velocity_deadband` | 5 px/s | 小速度死区 |
 | `integral_limit` | 3000 | 原始误差积分累计限幅 |
 | `output_limit` | 180 | 最大有符号电机速度命令 |
-| `control_period_ms` | 10 ms | PID/电机命令周期；视觉数据仍为 50 Hz |
+| `control_period_ms` | 5 ms | PID/电机命令周期；视觉数据仍为 50 Hz |
 | `motor_slope` | 0 | 当前速度命令斜率参数 |
 | `motor_direction` | -1 | 匹配“正转让球向视觉左走” |
 | `stable_error` | 18 px | 约等于题目要求的 ±1 cm |
 | `stable_velocity` | 25 px/s | 稳定时还必须接近静止 |
-| `stable_cycles` | 25 | 按 10 ms 周期约 0.25 s 才标记稳定 |
+| `stable_cycles` | 25 | 按当前 5 ms 周期约 0.125 s 才标记稳定 |
 
 这些是限制输出的首次闭环参数，不是最终竞赛参数。电机传动比、摆杆倾角
 灵敏度和实际摩擦未知，因此第一次必须有人随时按 PB7 停止。

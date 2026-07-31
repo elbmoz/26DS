@@ -9,6 +9,10 @@ extern "C" {
 
 extern volatile double global_angle;
 extern volatile uint8_t new_data_received;
+extern volatile float angle_x;
+extern volatile float angle_y;
+extern volatile float angle_z;
+extern volatile float angular_velocity_x;
 extern volatile float angular_velocity_y;
 extern volatile float angular_velocity_z;
 extern volatile uint32_t hwt_yaw_frame_count;

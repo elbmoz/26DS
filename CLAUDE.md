@@ -42,16 +42,24 @@ Preprocessor defines: `USE_HAL_DRIVER;STM32F407xx`
    `0x03`. It uses MaixCAM position for P/I and filtered axis velocity for D.
    The current phase regulates to center (`target=0`); the later
    `+5 cm -> -5 cm` sequence has reserved pixel targets and a target setter.
-10. `DS_task.c/.h` — Question selection and start state machine. Question 1
-    runs line following; Question 2 runs center-return control. Both display
-    elapsed time and diagnostics on the OLED.
-11. `PID.c/.h` — Generic PID library reused by the balance-frame controller.
-12. `main.c` — Initializes the active peripherals and repeatedly calls
+10. `MotorPositionMonitor.c/.h` — Isolated Question 9 read-only monitor for
+    USART1 motor address `0x03`. It periodically requests command `0x36`,
+    tracks reply status, and exposes the raw `int32_t` position and angle.
+11. `Question9Telemetry.c/.h` — Isolated 5 Hz non-blocking Question 9
+    telemetry sender on USART6. It emits `Q9,...\n` frames containing motor
+    position, zero-relative three-axis angles, validity and motion status.
+12. `DS_task.c/.h` — Question selection and start state machine. Question 1
+    runs line following, Question 2 runs center-return control, and Question 9
+    displays motor 3 position while alternating isolated `+50/-50` relative
+    moves without starting either controller.
+13. `PID.c/.h` — Generic PID library reused by the balance-frame controller.
+14. `main.c` — Initializes the active peripherals and repeatedly calls
     `DS_Run()` and `DS_Task_Run()`.
 
 TIM2 provides a 1 ms tick through `DS_1msTickFromISR()`. UART RX callbacks
 dispatch to the motor, vision, and IMU handlers; the UART TX callback releases
-the USART6 feedback buffer. Each handler checks its UART instance.
+the active Question 2 feedback or Question 9 telemetry buffer. Each handler
+checks its UART instance.
 
 ## Hardware Map
 
@@ -62,7 +70,7 @@ the USART6 feedback buffer. Each handler checks its UART instance.
 | Balance-frame motor | USART1 address `0x03` |
 | IMU (JY61P) | USART2, 9600 |
 | General vision (retained) | UART5, 9600 |
-| Question 2 ball vision | USART6, PC6 TX / PC7 RX, 115200 |
+| Question 2 / Question 9 vision link | USART6, PC6 TX / PC7 RX, 115200 |
 | Infrared 1 through 8, left to right | PE11, PE10, PE9, PE8, PE7, PA6, PA11, PA7 |
 | Infrared active level | Low |
 | Button 1 / question select | PB6, active-low, internal pull-up |
@@ -80,9 +88,10 @@ these files and `gc.ioc` whenever the wiring changes.
 initialized by the active startup path. Keep them only if they become useful
 for status indication, debugging, or odometry.
 
-PC6 and PC7 are active again as USART6 TX/RX for Question 2 vision; the deleted
-servo stack is not restored. UART4 and USART3 remain generated as spare UART
-resources but are not initialized by `main.c`.
+PC6 and PC7 are active again as USART6 TX/RX for Question 2 vision and
+Question 9 outbound telemetry; the deleted servo stack is not restored. UART4
+and USART3 remain generated as spare UART resources but are not initialized by
+`main.c`.
 
 ## Removed Logistics-Robot Modules
 

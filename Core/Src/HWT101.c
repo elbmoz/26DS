@@ -9,6 +9,10 @@ static const uint8_t hwt_zero_yaw_command[] = {0xFF, 0xAA, 0x76, 0x00, 0x00};
 
 volatile double global_angle;
 volatile uint8_t new_data_received;
+volatile float angle_x;
+volatile float angle_y;
+volatile float angle_z;
+volatile float angular_velocity_x;
 volatile float angular_velocity_y;
 volatile float angular_velocity_z;
 volatile uint32_t hwt_yaw_frame_count;
@@ -35,12 +39,22 @@ static void HWT101_ParseFrame(const uint8_t *data)
     }
 
     if (data[1] == 0x53U) {
+        raw_value = (int16_t)(((uint16_t)data[3] << 8) | data[2]);
+        angle_x = (float)raw_value * 180.0f / 32768.0f;
+
+        raw_value = (int16_t)(((uint16_t)data[5] << 8) | data[4]);
+        angle_y = (float)raw_value * 180.0f / 32768.0f;
+
         raw_value = (int16_t)(((uint16_t)data[7] << 8) | data[6]);
-        global_angle = (double)raw_value * 180.0 / 32768.0;
+        angle_z = (float)raw_value * 180.0f / 32768.0f;
+        global_angle = (double)angle_z;
         hwt_yaw_frame_count++;
         hwt_yaw_last_rx_ms = HAL_GetTick();
         new_data_received = 1U;
     } else if (data[1] == 0x52U) {
+        raw_value = (int16_t)(((uint16_t)data[3] << 8) | data[2]);
+        angular_velocity_x = (float)raw_value * 2000.0f / 32768.0f;
+
         raw_value = (int16_t)(((uint16_t)data[5] << 8) | data[4]);
         angular_velocity_y = (float)raw_value * 2000.0f / 32768.0f;
 
@@ -55,6 +69,10 @@ void HWT101_Init(UART_HandleTypeDef *huart)
     hwt_huart = huart;
     hwt_rx_index = 0U;
     global_angle = 0.0;
+    angle_x = 0.0f;
+    angle_y = 0.0f;
+    angle_z = 0.0f;
+    angular_velocity_x = 0.0f;
     angular_velocity_y = 0.0f;
     angular_velocity_z = 0.0f;
     hwt_yaw_frame_count = 0U;

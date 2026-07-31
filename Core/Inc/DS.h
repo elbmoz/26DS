@@ -78,7 +78,10 @@ typedef struct
     volatile uint32_t ball_vision_frame_count;
     volatile uint32_t ball_vision_last_rx_ms;
 
+    volatile float roll_deg;
+    volatile float pitch_deg;
     volatile float yaw_deg;
+    volatile float gyro_x_dps;
     volatile float gyro_y_dps;
     volatile float gyro_z_dps;
     volatile uint8_t yaw_valid;
@@ -114,6 +117,11 @@ HAL_StatusTypeDef DS_BalanceMoveRelative(int32_t pulses,
                                          uint8_t acceleration);
 HAL_StatusTypeDef DS_BalanceStop(void);
 HAL_StatusTypeDef DS_BalanceRequestPosition(void);
+HAL_StatusTypeDef DS_BalanceGetPositionRequestStatus(void);
+void DS_BalanceCancelPositionRequest(void);
+uint8_t DS_BalanceGetLastPositionRx(uint8_t *buffer,
+                                    uint8_t buffer_length,
+                                    uint32_t *uart_error);
 HAL_StatusTypeDef DS_BalanceReadPosition(int32_t *position, float *angle);
 
 #ifdef __cplusplus

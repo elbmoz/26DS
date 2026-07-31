@@ -17,6 +17,7 @@
 #include "DS_task.h"
 #include "BallVision.h"
 #include "HWT101.h"
+#include "Question9Telemetry.h"
 #include "serial.h"
 #include "zhangdatou.h"
 /* USER CODE END Includes */
@@ -50,7 +51,7 @@ int main(void)
     Error_Handler();
   }
 
-  (void)DS_BalanceMoveRelative(300, 50U, 10U);
+  (void)DS_BalanceMoveRelative(240, 50U, 10U);
 
   DS_Task_Init();
 
@@ -162,6 +163,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
 {
   BallVision_UART_TxCpltCallback(huart);
+  Question9Telemetry_UART_TxCpltCallback(huart);
 }
 
 void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
@@ -170,6 +172,7 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
   serial_ErrorHandler(huart);
   HWT101_UART_ErrorCallback(huart);
   BallVision_UART_ErrorCallback(huart);
+  Question9Telemetry_UART_ErrorCallback(huart);
 }
 /* USER CODE END 4 */
 
