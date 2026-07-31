@@ -8,20 +8,21 @@ extern "C" {
 #include "stm32f4xx_hal.h"
 
 /*
- * USART6 line protocol for Question 2:
+ * USART6 line protocol for Questions 2, 4 and 5:
  *   B,-12,35\n  signed center error in reference pixels and velocity
  *               in reference pixels per second
  *   none\n       no valid detection
  *
  * The receiver is armed only by BallVision_StartStream(). The STM32 sends
- * "c2" to start MaixCAM output and "ok" when Question 2 stops.
+ * "c2" to start MaixCAM output and "ok" when a control task stops.
  *
  * After each balance-motor command attempt, STM32 sends one non-blocking
  * feedback line to MaixCAM:
  *   F,seq,mcu_ms,vision_frame,vision_age_ms,position_x10,velocity_x10,
  *     error_x10,p_x100,i_x100,d_x100,motor_command,motor_status\n
- * P/I/D are the outer ball-controller contributions in 0.01 rod degrees;
- * motor_command is the final signed RS485 speed request from the angle loop.
+ * P/I/D use rod-angle units in Questions 2/4 and motor-speed units in
+ * Question 5. motor_command is the signed speed request in Questions 2/5
+ * and the absolute position target in Question 4.
  *
  * Missing sequence numbers mean feedback was dropped because USART6 was
  * still transmitting. Motor control is never delayed to wait for logging.

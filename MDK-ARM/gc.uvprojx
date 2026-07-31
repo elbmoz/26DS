@@ -435,6 +435,26 @@
               <FilePath>..\Core\Inc\Task3Motion.h</FilePath>
             </File>
             <File>
+              <FileName>Task4PositionControl.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\Task4PositionControl.c</FilePath>
+            </File>
+            <File>
+              <FileName>Task4PositionControl.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Core\Inc\Task4PositionControl.h</FilePath>
+            </File>
+            <File>
+              <FileName>Task5SpeedControl.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\Task5SpeedControl.c</FilePath>
+            </File>
+            <File>
+              <FileName>Task5SpeedControl.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Core\Inc\Task5SpeedControl.h</FilePath>
+            </File>
+            <File>
               <FileName>MotorPositionMonitor.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\Core\Src\MotorPositionMonitor.c</FilePath>

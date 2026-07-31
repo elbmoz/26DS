@@ -69,7 +69,7 @@ typedef struct
     volatile uint32_t vision_last_rx_ms;
 
     /*
-     * Question 2 output in the vision reference-pixel coordinate system:
+     * Question 2/4/5 output in the vision reference-pixel coordinate system:
      * position/error and velocity are positive toward image right.
      */
     volatile float ball_position;
@@ -118,10 +118,14 @@ HAL_StatusTypeDef DS_BalanceSetSpeed(int32_t speed, uint8_t slope);
 HAL_StatusTypeDef DS_BalanceMoveRelative(int32_t pulses,
                                          uint16_t speed,
                                          uint8_t acceleration);
+HAL_StatusTypeDef DS_BalanceMoveAbsolute(int32_t pulses,
+                                         uint16_t speed,
+                                         uint8_t acceleration);
 HAL_StatusTypeDef DS_BalanceStop(void);
 HAL_StatusTypeDef DS_BalanceRequestPosition(void);
 HAL_StatusTypeDef DS_BalanceGetPositionRequestStatus(void);
 void DS_BalanceCancelPositionRequest(void);
+uint32_t DS_BalanceGetLastTxTick(void);
 uint8_t DS_BalanceGetLastPositionRx(uint8_t *buffer,
                                     uint8_t buffer_length,
                                     uint32_t *uart_error);

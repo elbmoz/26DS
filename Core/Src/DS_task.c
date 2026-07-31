@@ -8,6 +8,8 @@
 #include "OLED.h"
 #include "Question9Telemetry.h"
 #include "Task3Motion.h"
+#include "Task4PositionControl.h"
+#include "Task5SpeedControl.h"
 #include "button.h"
 
 DS_TaskContext ds_task;
@@ -222,6 +224,42 @@ static void DS_Task_ShowQuestion2OledPaused(void)
     OLED_ShowString(4U, 1U, "K2:STOP");
 }
 
+static void DS_Task_ShowQuestion4(void)
+{
+    OLED_Clear();
+    OLED_ShowString(1U, 1U, "Q4 RX:X P:X S:X");
+    OLED_ShowString(2U, 1U, "E:+000.0 V:+000");
+    OLED_ShowString(3U, 1U, "C:+0000 A:+000.0");
+    OLED_ShowString(4U, 1U, "TIME:0000.0s D:1");
+}
+
+static void DS_Task_ShowQuestion4OledPaused(void)
+{
+    OLED_Clear();
+    OLED_ShowString(1U, 1U, "OLED REFRESH OFF");
+    OLED_ShowString(2U, 1U, "Q4 CONTROL RUN");
+    OLED_ShowString(3U, 1U, "K1:REFRESH ON");
+    OLED_ShowString(4U, 1U, "K2:STOP");
+}
+
+static void DS_Task_ShowQuestion5(void)
+{
+    OLED_Clear();
+    OLED_ShowString(1U, 1U, "Q5 RX:X DZ:X");
+    OLED_ShowString(2U, 1U, "E:+000.0 V:+000");
+    OLED_ShowString(3U, 1U, "M:+000 F:+000.0");
+    OLED_ShowString(4U, 1U, "TIME:0000.0s D:1");
+}
+
+static void DS_Task_ShowQuestion5OledPaused(void)
+{
+    OLED_Clear();
+    OLED_ShowString(1U, 1U, "OLED REFRESH OFF");
+    OLED_ShowString(2U, 1U, "Q5 CONTROL RUN");
+    OLED_ShowString(3U, 1U, "K1:REFRESH ON");
+    OLED_ShowString(4U, 1U, "K2:STOP");
+}
+
 static void DS_Task_ShowMotorPositionAngle(float angle_deg)
 {
     int64_t scaled_angle;
@@ -420,6 +458,50 @@ static void DS_Task_ShowQuestion2Finished(void)
     OLED_ShowString(4U, 1U, "K2:MENU");
 }
 
+static void DS_Task_ShowQuestion4Finished(void)
+{
+    OLED_Clear();
+    OLED_ShowString(1U, 1U, "Q4 STOPPED");
+    OLED_ShowString(2U, 1U, "TIME:0000.0s");
+    DS_Task_ShowTime(ds_task.elapsed_ms);
+    OLED_ShowString(3U, 1U, "E:+000.0 V:+000");
+    DS_Task_ShowSignedFixedOne(
+        3U,
+        3U,
+        task4_position_control_state.ball_position);
+    OLED_ShowSignedNum(
+        3U,
+        12U,
+        DS_Task_Clamp(
+            (int32_t)task4_position_control_state.ball_velocity,
+            -999,
+            999),
+        3U);
+    OLED_ShowString(4U, 1U, "K2:MENU");
+}
+
+static void DS_Task_ShowQuestion5Finished(void)
+{
+    OLED_Clear();
+    OLED_ShowString(1U, 1U, "Q5 STOPPED");
+    OLED_ShowString(2U, 1U, "TIME:0000.0s");
+    DS_Task_ShowTime(ds_task.elapsed_ms);
+    OLED_ShowString(3U, 1U, "E:+000.0 V:+000");
+    DS_Task_ShowSignedFixedOne(
+        3U,
+        3U,
+        task5_speed_control_state.camera_error);
+    OLED_ShowSignedNum(
+        3U,
+        12U,
+        DS_Task_Clamp(
+            (int32_t)task5_speed_control_state.ball_velocity,
+            -999,
+            999),
+        3U);
+    OLED_ShowString(4U, 1U, "K2:MENU");
+}
+
 static void DS_Task_ShowQuestion3Finished(void)
 {
     OLED_Clear();
@@ -537,6 +619,88 @@ static void DS_Task_ToggleQuestion2Oled(uint32_t now)
         ds_task.question2_oled_state = DS_TASK_Q2_OLED_UPDATING;
         ds_task_last_display_ms = now;
         DS_Task_ShowQuestion2();
+        break;
+    }
+}
+
+static void DS_Task_FinishQuestion4(uint32_t now)
+{
+    Task4PositionControl_Stop();
+    BallVision_StopStream();
+    ds_task.elapsed_ms = now - ds_task.start_ms;
+    ds_task.state = DS_TASK_FINISHED;
+    DS_Task_ShowQuestion4Finished();
+}
+
+static void DS_Task_StartQuestion4(void)
+{
+    ds_task.state = DS_TASK_RUNNING_Q4;
+    ds_task.question4_oled_state = DS_TASK_Q2_OLED_UPDATING;
+    ds_task.start_ms = HAL_GetTick();
+    ds_task.elapsed_ms = 0U;
+    ds_task_last_display_ms = ds_task.start_ms -
+                              DS_TASK_DISPLAY_PERIOD_MS;
+
+    Task4PositionControl_Start(0.0f);
+    /* 任务 4 复用任务 2 的 MaixCAM 球位置流，因此启动命令仍为 c2。 */
+    BallVision_StartStream();
+    DS_Task_ShowQuestion4();
+}
+
+static void DS_Task_ToggleQuestion4Oled(uint32_t now)
+{
+    switch (ds_task.question4_oled_state) {
+    case DS_TASK_Q2_OLED_UPDATING:
+        ds_task.question4_oled_state = DS_TASK_Q2_OLED_PAUSED;
+        DS_Task_ShowQuestion4OledPaused();
+        break;
+
+    case DS_TASK_Q2_OLED_PAUSED:
+    default:
+        ds_task.question4_oled_state = DS_TASK_Q2_OLED_UPDATING;
+        ds_task_last_display_ms = now;
+        DS_Task_ShowQuestion4();
+        break;
+    }
+}
+
+static void DS_Task_FinishQuestion5(uint32_t now)
+{
+    Task5SpeedControl_Stop();
+    BallVision_StopStream();
+    ds_task.elapsed_ms = now - ds_task.start_ms;
+    ds_task.state = DS_TASK_FINISHED;
+    DS_Task_ShowQuestion5Finished();
+}
+
+static void DS_Task_StartQuestion5(void)
+{
+    ds_task.state = DS_TASK_RUNNING_Q5;
+    ds_task.question5_oled_state = DS_TASK_Q2_OLED_UPDATING;
+    ds_task.start_ms = HAL_GetTick();
+    ds_task.elapsed_ms = 0U;
+    ds_task_last_display_ms = ds_task.start_ms -
+                              DS_TASK_DISPLAY_PERIOD_MS;
+
+    Task5SpeedControl_Start();
+    /* Question 5 uses the same MaixCAM error stream and c2 command. */
+    BallVision_StartStream();
+    DS_Task_ShowQuestion5();
+}
+
+static void DS_Task_ToggleQuestion5Oled(uint32_t now)
+{
+    switch (ds_task.question5_oled_state) {
+    case DS_TASK_Q2_OLED_UPDATING:
+        ds_task.question5_oled_state = DS_TASK_Q2_OLED_PAUSED;
+        DS_Task_ShowQuestion5OledPaused();
+        break;
+
+    case DS_TASK_Q2_OLED_PAUSED:
+    default:
+        ds_task.question5_oled_state = DS_TASK_Q2_OLED_UPDATING;
+        ds_task_last_display_ms = now;
+        DS_Task_ShowQuestion5();
         break;
     }
 }
@@ -877,6 +1041,105 @@ static void DS_Task_UpdateQuestion2Display(uint32_t now)
     DS_Task_ShowTimeOnLine(4U, ds_task.elapsed_ms);
 }
 
+static void DS_Task_UpdateQuestion4Display(uint32_t now)
+{
+    int32_t command;
+    int32_t velocity;
+
+    if (ds_task.question4_oled_state !=
+        DS_TASK_Q2_OLED_UPDATING) {
+        return;
+    }
+
+    if ((uint32_t)(now - ds_task_last_display_ms) <
+        DS_TASK_DISPLAY_PERIOD_MS) {
+        return;
+    }
+
+    ds_task_last_display_ms = now;
+    DS_Task_ShowSignedFixedOne(
+        2U,
+        3U,
+        task4_position_control_state.ball_position);
+
+    velocity = DS_Task_Clamp(
+        (int32_t)task4_position_control_state.ball_velocity,
+        -999,
+        999);
+    OLED_ShowSignedNum(2U, 12U, velocity, 3U);
+    OLED_ShowChar(
+        1U,
+        7U,
+        (task4_position_control_state.vision_valid != 0U) ? 'V' : 'X');
+    OLED_ShowChar(
+        1U,
+        11U,
+        (task4_position_control_state.motor_position_valid != 0U) ?
+        'V' : 'X');
+
+    command = DS_Task_Clamp(
+        task4_position_control_state.motor_command_pulses,
+        -9999,
+        9999);
+    OLED_ShowSignedNum(3U, 3U, command, 4U);
+    DS_Task_ShowSignedFixedOne(
+        3U,
+        11U,
+        task4_position_control_state.rod_angle_deg);
+    OLED_ShowChar(
+        1U,
+        15U,
+        (Task4PositionControl_IsStable() != 0U) ? 'V' : 'X');
+    DS_Task_ShowTimeOnLine(4U, ds_task.elapsed_ms);
+}
+
+static void DS_Task_UpdateQuestion5Display(uint32_t now)
+{
+    int32_t command;
+    int32_t velocity;
+
+    if (ds_task.question5_oled_state !=
+        DS_TASK_Q2_OLED_UPDATING) {
+        return;
+    }
+
+    if ((uint32_t)(now - ds_task_last_display_ms) <
+        DS_TASK_DISPLAY_PERIOD_MS) {
+        return;
+    }
+
+    ds_task_last_display_ms = now;
+    DS_Task_ShowSignedFixedOne(
+        2U,
+        3U,
+        task5_speed_control_state.camera_error);
+
+    velocity = DS_Task_Clamp(
+        (int32_t)task5_speed_control_state.ball_velocity,
+        -999,
+        999);
+    OLED_ShowSignedNum(2U, 12U, velocity, 3U);
+    OLED_ShowChar(
+        1U,
+        7U,
+        (task5_speed_control_state.vision_valid != 0U) ? 'V' : 'X');
+    OLED_ShowChar(
+        1U,
+        12U,
+        (task5_speed_control_state.in_deadband != 0U) ? 'V' : 'X');
+
+    command = DS_Task_Clamp(
+        task5_speed_control_state.motor_command,
+        -999,
+        999);
+    OLED_ShowSignedNum(3U, 3U, command, 3U);
+    DS_Task_ShowSignedFixedOne(
+        3U,
+        10U,
+        task5_speed_control_state.feedforward_term);
+    DS_Task_ShowTimeOnLine(4U, ds_task.elapsed_ms);
+}
+
 static void DS_Task_UpdateQuestion9Display(uint32_t now)
 {
     if ((uint32_t)(now - ds_task_last_display_ms) <
@@ -904,11 +1167,15 @@ static void DS_Task_UpdatePassiveImuDisplay(uint32_t now)
     if (ds_task.state == DS_TASK_RUNNING_Q1 ||
         ds_task.state == DS_TASK_RUNNING_Q2 ||
         ds_task.state == DS_TASK_RUNNING_Q3 ||
+        ds_task.state == DS_TASK_RUNNING_Q4 ||
+        ds_task.state == DS_TASK_RUNNING_Q5 ||
         ds_task.state == DS_TASK_RUNNING_Q9 ||
         (ds_task.state == DS_TASK_FINISHED &&
          (ds_task.selected_question == 2U ||
-          ds_task.selected_question == 3U ||
-          ds_task.selected_question == 9U)) ||
+           ds_task.selected_question == 3U ||
+           ds_task.selected_question == 4U ||
+           ds_task.selected_question == 5U ||
+           ds_task.selected_question == 9U)) ||
         (uint32_t)(now - ds_task_last_display_ms) <
         DS_TASK_DISPLAY_PERIOD_MS) {
         return;
@@ -934,6 +1201,8 @@ void DS_Task_Init(void)
     LineFollow_Init();
     BalanceControl_Init();
     Task3Motion_Init();
+    Task4PositionControl_Init();
+    Task5SpeedControl_Init();
     MotorPositionMonitor_Init();
 
     ds_task.state = DS_TASK_MENU;
@@ -943,6 +1212,8 @@ void DS_Task_Init(void)
     ds_task.oled_address =
         (ds_task.oled_ready != 0U) ? OLED_GetAddress() : 0U;
     ds_task.question2_oled_state = DS_TASK_Q2_OLED_UPDATING;
+    ds_task.question4_oled_state = DS_TASK_Q2_OLED_UPDATING;
+    ds_task.question5_oled_state = DS_TASK_Q2_OLED_UPDATING;
     ds_task.start_ms = 0U;
     ds_task.elapsed_ms = 0U;
     ds_task_last_display_ms = 0U;
@@ -998,6 +1269,10 @@ void DS_Task_Run(void)
                 DS_Task_StartQuestion2();
             } else if (ds_task.selected_question == 3U) {
                 DS_Task_StartQuestion3();
+            } else if (ds_task.selected_question == 4U) {
+                DS_Task_StartQuestion4();
+            } else if (ds_task.selected_question == 5U) {
+                DS_Task_StartQuestion5();
             } else if (ds_task.selected_question == 9U) {
                 DS_Task_StartQuestion9();
             } else {
@@ -1051,6 +1326,36 @@ void DS_Task_Run(void)
         }
         break;
 
+    case DS_TASK_RUNNING_Q4:
+        ds_task.elapsed_ms = now - ds_task.start_ms;
+
+        if (key2_clicked != 0U) {
+            DS_Task_FinishQuestion4(now);
+            break;
+        }
+
+        Task4PositionControl_Update();
+        if (key1_clicked != 0U) {
+            DS_Task_ToggleQuestion4Oled(now);
+        }
+        DS_Task_UpdateQuestion4Display(now);
+        break;
+
+    case DS_TASK_RUNNING_Q5:
+        ds_task.elapsed_ms = now - ds_task.start_ms;
+
+        if (key2_clicked != 0U) {
+            DS_Task_FinishQuestion5(now);
+            break;
+        }
+
+        Task5SpeedControl_Update();
+        if (key1_clicked != 0U) {
+            DS_Task_ToggleQuestion5Oled(now);
+        }
+        DS_Task_UpdateQuestion5Display(now);
+        break;
+
     case DS_TASK_RUNNING_Q9:
         ds_task.elapsed_ms = now - ds_task.start_ms;
 
@@ -1088,6 +1393,12 @@ void DS_Task_Stop(void)
     if (ds_task.state == DS_TASK_RUNNING_Q2) {
         BalanceControl_Stop();
         BallVision_StopStream();
+    } else if (ds_task.state == DS_TASK_RUNNING_Q4) {
+        Task4PositionControl_Stop();
+        BallVision_StopStream();
+    } else if (ds_task.state == DS_TASK_RUNNING_Q5) {
+        Task5SpeedControl_Stop();
+        BallVision_StopStream();
     } else if (ds_task.state == DS_TASK_RUNNING_Q3) {
         Task3Motion_Stop();
     } else if (ds_task.state == DS_TASK_RUNNING_Q1) {
@@ -1100,6 +1411,8 @@ void DS_Task_Stop(void)
     if (ds_task.state == DS_TASK_RUNNING_Q1 ||
         ds_task.state == DS_TASK_RUNNING_Q2 ||
         ds_task.state == DS_TASK_RUNNING_Q3 ||
+        ds_task.state == DS_TASK_RUNNING_Q4 ||
+        ds_task.state == DS_TASK_RUNNING_Q5 ||
         ds_task.state == DS_TASK_RUNNING_Q9) {
         ds_task.elapsed_ms = HAL_GetTick() - ds_task.start_ms;
     }

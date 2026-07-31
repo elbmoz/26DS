@@ -31,10 +31,10 @@ BalanceControlConfig balance_control_config = {
      * - 电机被速度噪声带着抖：减小 Kd；
      * - P/D 稳定后仍有固定静差，最后才逐步增加 Ki。
      */
-    .outer_kp_deg_per_px = 0.8044f,       /* 位置 P：误差每 1 px 产生的角度。 */
+    .outer_kp_deg_per_px = 0.026044f,       /* 位置 P：误差每 1 px 产生的角度。 */
     /* 首轮为 0；P/D 调稳后可从参考候选 0.03297 开始小步增加。 */
     .outer_ki_deg_per_px_s = 0.0f,      /* 位置 I：用于消除固定静差。 */
-    .outer_kd_deg_per_px_s = 0.1389f,     /* 速度 D：使用 -Kd*球速抑制冲过中心。 */
+    .outer_kd_deg_per_px_s = 0.0056f,     /* 速度 D：使用 -Kd*球速抑制冲过中心。 */
     .outer_integral_limit_px_s = 109.2f, /* 限制积分累积，防止积分饱和。 */
     /*
      * 当前值允许 ±5.5°目标管道角；最终不得超过拟合得到的
@@ -74,7 +74,7 @@ BalanceControlConfig balance_control_config = {
      * a010e37 稳态拟合：
      *   管道X角 = -0.0020022658 * 电机原始位置 + 截距
      *
-     * 六字节 0x36 回包在底层换算为：
+     * 标准八字节 0x36 回包在底层换算为：
      *   电机角 = 电机原始位置 * 360 / 65536
      *
      * 所以：
@@ -85,7 +85,7 @@ BalanceControlConfig balance_control_config = {
      */
     .motor_zero_angle_deg = 0.0f,       /* 本次管道水平对应的电机角。 */
     .rod_angle_per_motor_degree = -0.36450137f, /* 实测带符号传动比例。 */
-    .rod_angle_limit_deg = 6.5f,        /* 超过该实际管道角时强制回水平。 */
+    .rod_angle_limit_deg = 10.5f,        /* 超过该实际管道角时强制回水平。 */
     .capture_motor_zero_on_start = 1U,  /* 1：启动后首个有效位置作为水平零点。 */
 
     /*
@@ -98,11 +98,11 @@ BalanceControlConfig balance_control_config = {
      * - motor_min_speed：克服静摩擦的最小速度；
      * - motor_speed_deadband：目标附近的停车死区。
      */
-    .angle_kp_speed_per_deg = 1.5f,     /* 角度误差每 1°产生的速度命令。 */
-    .motor_speed_limit = 30.0f,         /* 最终速度命令绝对值不得超过 30。 */
-    .motor_speed_deadband = 2.0f,       /* 连续速度落入该死区时命令为 0。 */
-    .motor_min_speed = 1.0f,            /* 最小非零命令 1；缩放成功时为 0.1 RPM。 */
-    .motor_slew_per_update = 2.0f,      /* 每 20 ms 最多改变 2 个速度命令单位。 */
+    .angle_kp_speed_per_deg = 24.0f,     /* 角度误差每 1°产生的速度命令。 */
+    .motor_speed_limit = 10.0f,         /* 最终速度命令绝对值不得超过 30。 */
+    .motor_speed_deadband = 0.3f,       /* 连续速度落入该死区时命令为 0。 */
+    .motor_min_speed = 0.5f,            /* 最小非零命令 1；缩放成功时为 0.1 RPM。 */
+    .motor_slew_per_update = 150.0f,      /* 每 20 ms 最多改变 2 个速度命令单位。 */
     /*
      * F6 驱动器加减速档。0 表示直接启停/换向；非零时数值越大加减速越快。
      * DS_Init() 会尝试启用 3 号电机 S_Vel_IS；成功时命令 1 = 0.1 RPM。
@@ -119,7 +119,7 @@ BalanceControlConfig balance_control_config = {
 
     .control_period_ms = 20U,           /* 任务 2 内外环计算周期：50 Hz。 */
     .motor_position_period_ms = 20U,    /* 0x36 电机位置查询周期：50 Hz。 */
-    .motor_position_timeout_ms = 60U,   /* 连续 60 ms 没有新位置就停机。 */
+    .motor_position_timeout_ms = 120U,  /* 短时丢包沿用末值；连续 120 ms 无更新才停机。 */
 
     .stable_error_px = 19.2f,           /* 稳定时允许的位置误差：约 1 cm。 */
     .stable_velocity_px_s = 25.0f,      /* 稳定时允许的最大球速。 */
@@ -493,7 +493,7 @@ static void BalanceControl_UpdateInner(uint32_t vision_frame,
     uint8_t command_attempted = 0U;
     HAL_StatusTypeDef motor_status = HAL_OK;
 
-    if (MotorPositionMonitor_IsFresh(
+    if (MotorPositionMonitor_HasRecentSample(
             balance_control_config.motor_position_timeout_ms) == 0U) {
         BalanceControl_StopForInvalidPosition(
             vision_frame,

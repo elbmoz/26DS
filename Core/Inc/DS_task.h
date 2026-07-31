@@ -28,6 +28,8 @@ typedef enum
     DS_TASK_RUNNING_Q1,
     DS_TASK_RUNNING_Q2,
     DS_TASK_RUNNING_Q3,
+    DS_TASK_RUNNING_Q4,
+    DS_TASK_RUNNING_Q5,
     DS_TASK_RUNNING_Q9,
     DS_TASK_FINISHED,
     DS_TASK_NOT_READY
@@ -47,6 +49,8 @@ typedef struct
     volatile uint8_t oled_ready;
     volatile uint8_t oled_address;
     volatile DS_TaskQuestion2OledState question2_oled_state;
+    volatile DS_TaskQuestion2OledState question4_oled_state;
+    volatile DS_TaskQuestion2OledState question5_oled_state;
     volatile uint32_t start_ms;
     volatile uint32_t elapsed_ms;
 } DS_TaskContext;

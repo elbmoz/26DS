@@ -117,6 +117,16 @@ void MotorPositionMonitor_StartWithPeriod(uint32_t request_period_ms)
         now - request_period_ms;
 }
 
+void MotorPositionMonitor_SetPeriod(uint32_t request_period_ms)
+{
+    if (request_period_ms < MOTOR_POSITION_MONITOR_MIN_PERIOD_MS) {
+        request_period_ms = MOTOR_POSITION_MONITOR_MIN_PERIOD_MS;
+    }
+
+    /* Preserve the current sample and any in-flight request. */
+    motor_position_monitor_state.request_period_ms = request_period_ms;
+}
+
 void MotorPositionMonitor_Update(void)
 {
     HAL_StatusTypeDef status;
@@ -163,6 +173,16 @@ void MotorPositionMonitor_Update(void)
         return;
     }
 
+    /*
+     * The driver may answer the preceding F6/FD/FE action command. Give that
+     * four-byte acknowledgement time to leave the half-duplex bus before a
+     * new 0x36 request is transmitted.
+     */
+    if ((uint32_t)(now - DS_BalanceGetLastTxTick()) <
+        MOTOR_POSITION_MONITOR_TX_GUARD_MS) {
+        return;
+    }
+
     status = DS_BalanceRequestPosition();
     motor_position_last_request_ms = now;
     motor_position_monitor_state.request_count++;
@@ -191,7 +211,16 @@ void MotorPositionMonitor_Stop(void)
 uint8_t MotorPositionMonitor_IsFresh(uint32_t maximum_age_ms)
 {
     if (motor_position_monitor_state.active == 0U ||
-        motor_position_monitor_state.valid == 0U ||
+        motor_position_monitor_state.valid == 0U) {
+        return 0U;
+    }
+
+    return MotorPositionMonitor_HasRecentSample(maximum_age_ms);
+}
+
+uint8_t MotorPositionMonitor_HasRecentSample(uint32_t maximum_age_ms)
+{
+    if (motor_position_monitor_state.active == 0U ||
         motor_position_monitor_state.update_count == 0U) {
         return 0U;
     }

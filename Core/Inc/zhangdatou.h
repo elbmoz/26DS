@@ -70,9 +70,8 @@ HAL_StatusTypeDef Motor_SyncStart(void);
 
 HAL_StatusTypeDef Motor_RequestSpeedUpdate(uint8_t address);
 /*
- * Starts a non-blocking 0x36 request. Supports both the six-byte
- * address+int32+0x6B reply and the eight-byte
- * address+0x36+sign+magnitude+0x6B reply.
+ * Starts a non-blocking 0x36 request. The Emm_V5.0 reply is fixed at eight
+ * bytes: address+0x36+sign+four-byte magnitude+0x6B.
  */
 HAL_StatusTypeDef Motor_RequestPositionUpdate(uint8_t address);
 HAL_StatusTypeDef Motor_ReadSpeed(uint8_t address, int32_t *speed_rpm);
@@ -90,6 +89,7 @@ uint8_t Motor_GetLastRxFrame(uint8_t *buffer,
 uint32_t Motor_GetSpeedTxCount(void);
 HAL_StatusTypeDef Motor_GetLastSpeedTxStatus(void);
 void Motor_GetLastSpeedTxCommand(uint8_t *command, uint8_t length);
+uint32_t Motor_GetLastTxTick(void);
 
 void Motor_UART_RxCpltCallback(UART_HandleTypeDef *huart);
 void Motor_UART_ErrorCallback(UART_HandleTypeDef *huart);

@@ -10,7 +10,7 @@ STM32F407VETx electronic-design competition car. The current hardware consists o
 - One RS485 stepper motor for a ball-balancing frame
 - Eight digital infrared line sensors
 - Two independent UART vision links: the retained general receiver and the
-  Question 2 ball-position receiver
+  Question 2/4/5 ball-position receiver
 - A JY61P three-axis IMU
 - An SSD1306-compatible hardware-I2C OLED
 - Two active-low task-selection buttons
@@ -31,7 +31,7 @@ Preprocessor defines: `USE_HAL_DRIVER;STM32F407xx`
    retained under its original name and now used with JY61P on USART2.
 3. `serial.c/.h` — Retained line-based vision receiver on UART5. It accepts
    `x_error,y_error\n` and `none\n`.
-4. `BallVision.c/.h` — Full-duplex Question 2 link on USART6. After `c2`
+4. `BallVision.c/.h` — Full-duplex Question 2/4/5 link on USART6. After `c2`
    start it accepts `B,error_px,velocity_px_s\n`, or `none\n`; after each
    balance-motor command it returns a non-blocking `F,...\n` control-feedback
    frame to MaixCAM, and `ok` stops the stream.
@@ -53,34 +53,60 @@ Preprocessor defines: `USE_HAL_DRIVER;STM32F407xx`
    `6.0` degrees and the protection limit is `6.5` degrees; first-loop tuning
    currently restricts the target to `1.5` degrees, motor speed to `30`, slew
    to `8`, and disables both outer integral gains.
+   Position readback leaves a 2 ms half-duplex turnaround guard after action
+   commands, discards late four-byte action acknowledgements while resynchronizing
+   the standard eight-byte `0x36` frame, and lets Question 2 hold its last good
+   angle through brief dropouts for at most 120 ms before stopping.
    The current phase regulates to center (`target=0`); the later
    `+5 cm -> -5 cm` sequence has reserved pixel targets and a target setter.
-10. `MotorPositionMonitor.c/.h` — Shared non-blocking `0x36` position reader
-    for Questions 2 and 9. Each task selects its own period; Question 9 uses
-    20 ms for 50 Hz calibration sampling without changing Question 2.
-11. `Question9Telemetry.c/.h` — Isolated 50 Hz non-blocking Question 9
+10. `Task4PositionControl.c/.h` — Isolated Question 4 controller. It copies the
+    Question 2 ball-position outer loop but removes the software motor-speed
+    inner loop. The reviewed `-0.0020022658 rod deg / position count` mapping
+    and `20.48 position counts / command pulse` conversion produce an absolute
+    `0xFD` position target for the driver's internal position loop. It acquires
+    the startup anchor with 5 ms `0x36` polling, then automatically reduces
+    polling to 200 ms while refreshing the absolute target every 20 ms.
+    Question 4 always captures its own horizontal position on entry and never
+    reads or writes `balance_control_config` or
+    `balance_control_state`.
+11. `Task5SpeedControl.c/.h` — Fully isolated Question 5 controller. It applies
+    a single PID directly to the MaixCAM center error and sends the result as a
+    signed `0xF6` motor-speed command. A separately limited velocity
+    feedforward term uses MaixCAM's ball-velocity measurement to reduce response
+    lag. It has no linkage mapping and no motor position loop. The current
+    defaults are `Kp=0.012`, `Ki=0`, `Kd=0.01`, velocity-feedforward gain
+    `0.01`, feedforward limit `3`, speed limit `10`, and an inclusive
+    `+/-20 px` stop deadband.
+12. `MotorPositionMonitor.c/.h` — Shared non-blocking `0x36` position reader
+    for Questions 2, 4 and 9. Each task selects its own period; Question 9 uses
+    20 ms for 50 Hz calibration sampling without changing Question 2. It also
+    enforces the shared 2 ms action-command-to-query turnaround guard.
+13. `Question9Telemetry.c/.h` — Isolated 50 Hz non-blocking Question 9
     telemetry sender on USART6. It emits `Q9,...\n` frames containing motor
     position, zero-relative three-axis angles, validity and motion status.
-12. `Task3Motion.c/.h` — Question 3 non-blocking, open-loop timed sequence for
+14. `Task3Motion.c/.h` — Question 3 non-blocking, open-loop timed sequence for
     balance motor `0x03`. Its direction/speed/time table is intentionally centralized
     at the top of the source file for on-car tuning; runtime is hard-limited to
     5 seconds, and OLED writes are suppressed while the sequence is running so
     blocking I2C traffic cannot delay a timed reversal.
-13. `DS_task.c/.h` — Question selection and start state machine. Question 1
+15. `DS_task.c/.h` — Question selection and start state machine. Question 1
     runs line following, Question 2 runs center-return control and lets PB6
-    toggle its periodic OLED/I2C output without stopping control, and Question
-    3 runs the fixed timed motor sequence. Question 9 displays motor 3 position
+    toggle its periodic OLED/I2C output without stopping control, Question 3
+    runs the fixed timed motor sequence, and Question 4 runs its independent
+    position-mode center-return controller with the same OLED toggle. Question
+    5 runs its isolated direct speed-PID controller and reuses the same OLED
+    data/toggle pattern. Question 9 displays motor 3 position
     while moving between independently adjustable
     upper/lower endpoints, without starting either controller or changing
     Question 2 settings.
-14. `PID.c/.h` — Retained generic PID library. Question 2 uses its own
+16. `PID.c/.h` — Retained generic PID library. Question 2 uses its own
     dt-aware, gain-scheduled cascaded law in `BalanceControl`.
-15. `main.c` — Initializes the active peripherals and repeatedly calls
+17. `main.c` — Initializes the active peripherals and repeatedly calls
     `DS_Run()` and `DS_Task_Run()`.
 
 TIM2 provides a 1 ms tick through `DS_1msTickFromISR()`. UART RX callbacks
 dispatch to the motor, vision, and IMU handlers; the UART TX callback releases
-the active Question 2 feedback or Question 9 telemetry buffer. Each handler
+the active Question 2/4/5 feedback or Question 9 telemetry buffer. Each handler
 checks its UART instance.
 
 ## Balance-Motor Startup Invariant
@@ -93,8 +119,36 @@ or a calibrated zero. Do not remove, invert or retune this command unless the
 mechanical startup requirement explicitly changes. Question 9 collects motion,
 motor-position and IMU telemetry after this pre-positioning, but it must not
 write Question 2 zero, linkage-ratio, direction or controller parameters.
-Question 2 calibration values may be changed only from a reviewed offline fit;
-the current signed ratio and direction settings come from commit `a010e37`.
+Question 2/4 calibration values may be changed only from a reviewed offline
+fit; the current signed mappings come from commit `a010e37`.
+
+## Question 4 Isolation Invariant
+
+Question 4 is the position-mode comparison controller, not a runtime mode
+switch inside Question 2. Keep its configuration, captured horizontal zero,
+integrator, stability state and motor-command timing in
+`Task4PositionControl`; it must not mutate any `balance_control_config` or
+`balance_control_state` field. It reuses the `c2` MaixCAM stream format because
+the vision measurement is unchanged. A valid standard eight-byte Emm_V5.0
+`0x36` position reply and the reviewed mapping are required before it may
+issue its first position target. Once that horizontal anchor is captured, `P=V` records the
+anchor for the current session; later low-rate query failures must not interrupt
+the 20 ms absolute-position command stream. Loss of vision must command the
+captured horizontal target. The absolute target is anchored to the first valid
+position after Question 4 starts, so the `P=5025.92` intercept from the old
+capture session must never be installed as a cross-power-cycle zero.
+
+## Question 5 Isolation Invariant
+
+Question 5 is a direct single-loop PID plus velocity-feedforward speed
+controller. Keep its gains, feedforward limits, integrator, derivative history,
+vision state and motor-command state in
+`Task5SpeedControl`; it must not read or write `balance_control_config`,
+`balance_control_state`, `task4_position_control_config`, or
+`task4_position_control_state`. It reuses the `c2` MaixCAM stream and OLED data
+layout, but must not start `MotorPositionMonitor` or apply any linkage,
+angle, pulse, or position mapping. Vision loss and errors inside the inclusive
+`+/-20 px` deadband must command a stop.
 
 ## Question 9 Data-Collection Invariant
 
@@ -127,7 +181,7 @@ analyzed offline before reviewed results are manually entered into Question 2.
 | Balance-frame motor | USART1 address `0x03` |
 | IMU (JY61P) | USART2, 9600 |
 | General vision (retained) | UART5, 9600 |
-| Question 2 / Question 9 vision link | USART6, PC6 TX / PC7 RX, 115200 |
+| Question 2 / 4 / 5 / 9 vision link | USART6, PC6 TX / PC7 RX, 115200 |
 | Infrared 1 through 8, left to right | PE11, PE10, PE9, PE8, PE7, PA6, PA11, PA7 |
 | Infrared active level | Low |
 | Button 1 / question select | PB6, active-low, internal pull-up |
@@ -145,7 +199,7 @@ these files and `gc.ioc` whenever the wiring changes.
 initialized by the active startup path. Keep them only if they become useful
 for status indication, debugging, or odometry.
 
-PC6 and PC7 are active again as USART6 TX/RX for Question 2 vision and
+PC6 and PC7 are active again as USART6 TX/RX for Question 2/4/5 vision and
 Question 9 outbound telemetry; the deleted servo stack is not restored. UART4
 and USART3 remain generated as spare UART resources but are not initialized by
 `main.c`.

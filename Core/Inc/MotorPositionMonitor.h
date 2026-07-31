@@ -9,6 +9,7 @@ extern "C" {
 
 #define MOTOR_POSITION_MONITOR_PERIOD_MS        100U
 #define MOTOR_POSITION_MONITOR_MIN_PERIOD_MS      5U
+#define MOTOR_POSITION_MONITOR_TX_GUARD_MS         3U
 #define MOTOR_POSITION_MONITOR_RX_BYTES          12U
 
 typedef struct
@@ -33,8 +34,10 @@ extern MotorPositionMonitorState motor_position_monitor_state;
 void MotorPositionMonitor_Init(void);
 void MotorPositionMonitor_Start(void);
 void MotorPositionMonitor_StartWithPeriod(uint32_t request_period_ms);
+void MotorPositionMonitor_SetPeriod(uint32_t request_period_ms);
 void MotorPositionMonitor_Update(void);
 void MotorPositionMonitor_Stop(void);
+uint8_t MotorPositionMonitor_HasRecentSample(uint32_t maximum_age_ms);
 uint8_t MotorPositionMonitor_IsFresh(uint32_t maximum_age_ms);
 
 #ifdef __cplusplus

@@ -2,7 +2,7 @@
 
 #define MOTOR_CACHE_MAX_ADDR              8U
 #define MOTOR_RX_BUFFER_LENGTH            12U
-#define MOTOR_REQUEST_TIMEOUT_MS          20U
+#define MOTOR_REQUEST_TIMEOUT_MS          12U
 #define MOTOR_BLOCKING_TIMEOUT_MS         100U
 #define MOTOR_COMMAND_TIMEOUT_MS          100U
 
@@ -42,12 +42,11 @@ static volatile int32_t motor_speed_cache[MOTOR_CACHE_MAX_ADDR + 1U];
 static volatile int32_t motor_position_cache[MOTOR_CACHE_MAX_ADDR + 1U];
 static volatile uint8_t motor_speed_valid[MOTOR_CACHE_MAX_ADDR + 1U];
 static volatile uint8_t motor_position_valid[MOTOR_CACHE_MAX_ADDR + 1U];
-static volatile uint8_t motor_position_reply_length[
-    MOTOR_CACHE_MAX_ADDR + 1U];
 
 static volatile uint32_t motor_speed_tx_count;
 static volatile HAL_StatusTypeDef motor_speed_tx_status = HAL_OK;
 static uint8_t motor_last_speed_command[8];
+static volatile uint32_t motor_last_tx_tick;
 
 static uint8_t Motor_AddressIsValid(uint8_t address)
 {
@@ -74,14 +73,18 @@ static void Motor_FinishCommunication(HAL_StatusTypeDef status)
 
 static HAL_StatusTypeDef Motor_Send(const uint8_t *command, uint16_t length)
 {
+    HAL_StatusTypeDef status;
+
     if (motor_huart == NULL || command == NULL || length == 0U) {
         return HAL_ERROR;
     }
 
-    return HAL_UART_Transmit(motor_huart,
-                             (uint8_t *)command,
-                             length,
-                             MOTOR_COMMAND_TIMEOUT_MS);
+    status = HAL_UART_Transmit(motor_huart,
+                               (uint8_t *)command,
+                               length,
+                               MOTOR_COMMAND_TIMEOUT_MS);
+    motor_last_tx_tick = HAL_GetTick();
+    return status;
 }
 
 static void Motor_ParseReply(void)
@@ -100,24 +103,6 @@ static void Motor_ParseReply(void)
         motor_rx_buffer[1] == 0x00U &&
         motor_rx_buffer[2] == 0xEEU) {
         Motor_FinishCommunication(HAL_ERROR);
-        return;
-    }
-
-    /*
-     * Command 0x36 returns:
-     *   address + int32 position (big-endian, two's complement) + 0x6B
-     * There is no echoed command byte or separate sign byte in this reply.
-     */
-    if (motor_request_type == MOTOR_REQUEST_POSITION &&
-        motor_expected_length == 6U) {
-        raw_value = ((uint32_t)motor_rx_buffer[1] << 24) |
-                    ((uint32_t)motor_rx_buffer[2] << 16) |
-                    ((uint32_t)motor_rx_buffer[3] << 8) |
-                    motor_rx_buffer[4];
-        motor_position_cache[motor_request_address] = (int32_t)raw_value;
-        motor_position_valid[motor_request_address] = 1U;
-        motor_position_reply_length[motor_request_address] = 6U;
-        Motor_FinishCommunication(HAL_OK);
         return;
     }
 
@@ -143,8 +128,8 @@ static void Motor_ParseReply(void)
     }
 
     /*
-     * Compatibility with protocol variants that include command 0x36 and a
-     * separate sign byte before the four-byte position magnitude.
+     * Emm_V5.0 standard reply:
+     *   address + 0x36 + sign + four-byte position magnitude + 0x6B
      */
     if (motor_request_type == MOTOR_REQUEST_POSITION &&
         motor_expected_length == 8U) {
@@ -157,7 +142,6 @@ static void Motor_ParseReply(void)
                        (int32_t)raw_value;
         motor_position_cache[motor_request_address] = signed_value;
         motor_position_valid[motor_request_address] = 1U;
-        motor_position_reply_length[motor_request_address] = 8U;
         Motor_FinishCommunication(HAL_OK);
         return;
     }
@@ -230,11 +214,11 @@ void Motor_Init(UART_HandleTypeDef *huart)
     motor_last_uart_error = HAL_UART_ERROR_NONE;
     motor_speed_tx_status = HAL_OK;
     motor_speed_tx_count = 0U;
+    motor_last_tx_tick = 0U;
 
     for (address = 0U; address <= MOTOR_CACHE_MAX_ADDR; address++) {
         motor_speed_valid[address] = 0U;
         motor_position_valid[address] = 0U;
-        motor_position_reply_length[address] = 0U;
     }
 }
 
@@ -391,17 +375,10 @@ HAL_StatusTypeDef Motor_RequestSpeedUpdate(uint8_t address)
 
 HAL_StatusTypeDef Motor_RequestPositionUpdate(uint8_t address)
 {
-    uint8_t expected_length = 6U;
-
-    if (Motor_AddressIsValid(address) != 0U &&
-        motor_position_reply_length[address] == 8U) {
-        expected_length = 8U;
-    }
-
     return Motor_StartRequest(address,
                               0x36U,
                               MOTOR_REQUEST_POSITION,
-                              expected_length);
+                              8U);
 }
 
 HAL_StatusTypeDef Motor_ReadSpeed(uint8_t address, int32_t *speed_rpm)
@@ -436,11 +413,8 @@ HAL_StatusTypeDef Motor_ReadPosition(uint8_t address,
     *position = cached_position;
 
     if (angle != NULL) {
-        if (motor_position_reply_length[address] == 8U) {
-            *angle = (float)cached_position / 10.0f;
-        } else {
-            *angle = (float)cached_position * 360.0f / 65536.0f;
-        }
+        /* The standard eight-byte reply carries signed 0x36 counts. */
+        *angle = (float)cached_position * 360.0f / 65536.0f;
     }
 
     return HAL_OK;
@@ -494,13 +468,13 @@ HAL_StatusTypeDef Motor_ClearPosition(uint8_t address, uint8_t *state_code)
 uint8_t Motor_IsComBusy(void)
 {
     if (motor_com_state != MOTOR_COM_IDLE &&
-        (uint32_t)(HAL_GetTick() - motor_request_tick) >
+        (uint32_t)(HAL_GetTick() - motor_request_tick) >=
         MOTOR_REQUEST_TIMEOUT_MS) {
         HAL_StatusTypeDef status = HAL_TIMEOUT;
 
         /*
          * A position value may legitimately begin with 00 EE 6B, so command
-         * 0x36 always waits for all six bytes. If only the documented
+         * 0x36 waits for its complete eight-byte frame. If only the documented
          * four-byte error frame arrived, classify it when the request expires.
          */
         if (motor_request_type == MOTOR_REQUEST_POSITION &&
@@ -585,6 +559,25 @@ void Motor_GetLastSpeedTxCommand(uint8_t *command, uint8_t length)
     }
 }
 
+uint32_t Motor_GetLastTxTick(void)
+{
+    return motor_last_tx_tick;
+}
+
+static void Motor_ResetPositionRxFrame(void)
+{
+    motor_rx_index = 0U;
+    motor_rx_trace_length = 0U;
+    motor_expected_length = 8U;
+}
+
+static uint8_t Motor_IsActionReplyStatus(uint8_t status)
+{
+    return (status == 0x02U ||
+            status == 0xE2U ||
+            status == 0x9FU) ? 1U : 0U;
+}
+
 void Motor_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
     if (motor_huart == NULL ||
@@ -610,20 +603,46 @@ void Motor_UART_RxCpltCallback(UART_HandleTypeDef *huart)
          * looking for the requested motor address.
          */
         motor_rx_index = 0U;
+        motor_rx_trace_length = 0U;
     }
 
     if (motor_request_type == MOTOR_REQUEST_POSITION &&
-        motor_position_reply_length[motor_request_address] != 6U &&
+        motor_rx_index >= 3U &&
+        motor_rx_buffer[0] == motor_request_address &&
+        motor_rx_buffer[1] != motor_request_command &&
+        motor_rx_buffer[motor_rx_index - 1U] == motor_request_address) {
+        /*
+         * A truncated acknowledgement may be immediately followed by the
+         * real position frame. Re-anchor at its address before the mixed
+         * prefix can consume the expected eight-byte length.
+         */
+        motor_rx_buffer[0] = motor_request_address;
+        motor_rx_index = 1U;
+        motor_rx_trace_buffer[0] = motor_request_address;
+        motor_rx_trace_length = 1U;
+    }
+
+    if (motor_request_type == MOTOR_REQUEST_POSITION &&
         motor_rx_index == 3U &&
         motor_rx_buffer[0] == motor_request_address &&
         motor_rx_buffer[1] == motor_request_command &&
         motor_rx_buffer[2] == 0x6BU) {
         /* Ignore a local TX-to-RX echo of address + 0x36 + 0x6B. */
-        motor_rx_index = 0U;
-        motor_expected_length =
-            (motor_position_reply_length[motor_request_address] == 8U) ?
-            8U :
-            6U;
+        Motor_ResetPositionRxFrame();
+    }
+
+    if (motor_request_type == MOTOR_REQUEST_POSITION &&
+        motor_rx_index == 4U &&
+        motor_rx_buffer[0] == motor_request_address &&
+        motor_rx_buffer[1] != motor_request_command &&
+        motor_rx_buffer[1] != 0x00U &&
+        Motor_IsActionReplyStatus(motor_rx_buffer[2]) != 0U &&
+        motor_rx_buffer[3] == 0x6BU) {
+        /*
+         * Discard a late F6/FD/FE/F3 acknowledgement left by a preceding
+         * action command, then keep waiting for the requested 0x36 frame.
+         */
+        Motor_ResetPositionRxFrame();
     }
 
     if (motor_rx_index == 3U) {
@@ -643,8 +662,6 @@ void Motor_UART_RxCpltCallback(UART_HandleTypeDef *huart)
                 return;
             }
         } else if (motor_request_type == MOTOR_REQUEST_POSITION &&
-                   motor_position_reply_length[
-                       motor_request_address] == 0U &&
                    motor_rx_buffer[1] == motor_request_command &&
                    (motor_rx_buffer[2] == 0x00U ||
                     motor_rx_buffer[2] == 0x01U)) {

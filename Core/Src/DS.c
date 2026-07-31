@@ -388,6 +388,35 @@ HAL_StatusTypeDef DS_BalanceMoveRelative(int32_t pulses,
                                  SNF_DISABLE);
 }
 
+HAL_StatusTypeDef DS_BalanceMoveAbsolute(int32_t pulses,
+                                         uint16_t speed,
+                                         uint8_t acceleration)
+{
+    MotorDirection direction;
+    uint32_t magnitude;
+
+    if (Motor_IsComBusy() != 0U) {
+        return HAL_BUSY;
+    }
+
+    direction = DS_GetMotorDirection(pulses, DS_BALANCE_MOTOR_INVERTED);
+    magnitude = (pulses < 0) ?
+                ((uint32_t)(-(pulses + 1)) + 1U) :
+                (uint32_t)pulses;
+
+    if (speed > DS_MOTOR_MAX_SPEED) {
+        speed = DS_MOTOR_MAX_SPEED;
+    }
+
+    return Motor_PositionControl(DS_BALANCE_MOTOR_ADDR,
+                                 direction,
+                                 speed,
+                                 acceleration,
+                                 magnitude,
+                                 ABSOLUTE_POSITION,
+                                 SNF_DISABLE);
+}
+
 HAL_StatusTypeDef DS_BalanceStop(void)
 {
     return Motor_Stop(DS_BALANCE_MOTOR_ADDR, SNF_DISABLE);
@@ -406,6 +435,11 @@ HAL_StatusTypeDef DS_BalanceGetPositionRequestStatus(void)
 void DS_BalanceCancelPositionRequest(void)
 {
     Motor_CancelRequest();
+}
+
+uint32_t DS_BalanceGetLastTxTick(void)
+{
+    return Motor_GetLastTxTick();
 }
 
 uint8_t DS_BalanceGetLastPositionRx(uint8_t *buffer,
