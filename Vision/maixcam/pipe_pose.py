@@ -527,57 +527,40 @@ class GreenPipePoseDetector:
         }
 
 
-class TapeEndpointPipePoseDetector:
-    """Estimate pipe pose from a fixed left end and the moving right tape.
+class AnchoredPipePoseDetector:
+    """Track a moving 2-D right endpoint from a camera-fixed left endpoint.
 
-    The competition mechanism has a camera-fixed left black tape marker.  The
-    right tape marker follows the pipe rotation.  In the mounted view, direct
-    black segmentation joins that tape to the dark motor/cable background, so
-    the stable observable is the green-to-black boundary at its inner edge.
-    One small endpoint search supplies both pipe angle and the right endpoint.
+    A long green rail segment must enter the small right-side search ROI from
+    its left edge.  The segment's minimum-area rectangle supplies its right
+    endpoint directly, while the fixed left endpoint removes the ambiguity
+    that made whole-pipe fitting unnecessarily complex.
     """
 
     def __init__(
         self,
         frame_width,
         frame_height,
-        right_search_roi,
-        fallback_roi,
+        search_roi,
         fixed_left_endpoint,
         fallback_right_endpoint,
         thresholds,
-        detect_interval_frames=3,
-        min_width_px=7,
-        max_width_px=32,
-        min_height_px=18,
-        max_height_px=48,
-        min_pixels=45,
-        x_stride=3,
-        y_stride=3,
-        expected_right_x=None,
-        max_right_x_distance_px=0,
-        fixed_right_x=None,
-        max_right_y_step_px=0,
-        min_axis_length_px=300,
-        max_axis_length_px=420,
-        max_abs_angle_deg=8,
-        endpoint_from_blob_right_edge=False,
-        endpoint_x_offset_px=0,
-        smoothing_alpha=0.70,
-        roi_along_margin_px=0,
-        roi_lateral_margin_px=12,
-        roi_start_margin_px=0,
-        max_stale_frames=12,
+        detect_interval_frames=4,
+        length_range_px=(68, 180),
+        width_range_px=(6, 36),
+        min_pixels=50,
+        stride=(4, 3),
+        max_entry_gap_px=30,
+        endpoint_inset_px=14,
+        max_right_x_motion_px=52,
+        max_right_y_motion_px=34,
+        smoothing_alpha=0.55,
+        roi_lateral_margin_px=26,
+        roi_start_margin_px=12,
     ):
         self.frame_width = int(frame_width)
         self.frame_height = int(frame_height)
-        self.right_search_roi = clamp_roi(
-            right_search_roi,
-            self.frame_width,
-            self.frame_height,
-        )
-        self.fallback_roi = clamp_roi(
-            fallback_roi,
+        self.search_roi = clamp_roi(
+            search_roi,
             self.frame_width,
             self.frame_height,
         )
@@ -589,236 +572,169 @@ class TapeEndpointPipePoseDetector:
         )
         self.thresholds = [list(values) for values in thresholds]
         self.detect_interval_frames = max(1, int(detect_interval_frames))
-        self.min_width_px = max(1, int(min_width_px))
-        self.max_width_px = max(self.min_width_px, int(max_width_px))
-        self.min_height_px = max(1, int(min_height_px))
-        self.max_height_px = max(self.min_height_px, int(max_height_px))
+        self.min_length_px = max(1.0, float(length_range_px[0]))
+        self.max_length_px = max(
+            self.min_length_px, float(length_range_px[1])
+        )
+        self.min_width_px = max(1.0, float(width_range_px[0]))
+        self.max_width_px = max(
+            self.min_width_px, float(width_range_px[1])
+        )
         self.min_pixels = max(1, int(min_pixels))
-        self.x_stride = max(1, int(x_stride))
-        self.y_stride = max(1, int(y_stride))
-        self.expected_right_x = (
-            None
-            if expected_right_x is None
-            else float(expected_right_x)
+        self.x_stride = max(1, int(stride[0]))
+        self.y_stride = max(1, int(stride[1]))
+        self.max_entry_x = (
+            float(self.search_roi[0]) + max(0.0, float(max_entry_gap_px))
         )
-        self.max_right_x_distance_px = max(
-            0.0, float(max_right_x_distance_px)
+        self.endpoint_inset_px = max(0.0, float(endpoint_inset_px))
+        self.max_right_x_motion_px = max(
+            1.0, float(max_right_x_motion_px)
         )
-        self.fixed_right_x = (
-            None if fixed_right_x is None else float(fixed_right_x)
+        self.max_right_y_motion_px = max(
+            1.0, float(max_right_y_motion_px)
         )
-        self.max_right_y_step_px = max(
-            0.0, float(max_right_y_step_px)
-        )
-        self.min_axis_length_px = max(1.0, float(min_axis_length_px))
-        self.max_axis_length_px = max(
-            self.min_axis_length_px,
-            float(max_axis_length_px),
-        )
-        self.max_abs_angle_rad = math.radians(
-            max(0.0, float(max_abs_angle_deg))
-        )
-        self.endpoint_from_blob_right_edge = bool(
-            endpoint_from_blob_right_edge
-        )
-        self.endpoint_x_offset_px = float(endpoint_x_offset_px)
         self.smoothing_alpha = clamp(float(smoothing_alpha), 0.0, 1.0)
-        self.roi_along_margin_px = max(0.0, float(roi_along_margin_px))
         self.roi_lateral_margin_px = max(
             1.0, float(roi_lateral_margin_px)
         )
         self.roi_start_margin_px = max(
-            self.roi_along_margin_px,
-            float(roi_start_margin_px),
+            0.0, float(roi_start_margin_px)
         )
-        self.max_stale_frames = max(0, int(max_stale_frames))
 
-        fallback_right_x = (
-            self.fallback_right_endpoint[0]
-            if self.fixed_right_x is None
-            else self.fixed_right_x
-        )
-        self.physical_right_endpoint = (
-            fallback_right_x,
-            self.fallback_right_endpoint[1],
-        )
-        self._update_control_geometry()
+        self.right_endpoint = self.fallback_right_endpoint
         self.has_measurement = False
-        self.age_frames = self.max_stale_frames + 1
+        self.age_frames = 0
         self.last_score = 0.0
-        self.last_length = math.hypot(
-            self.axis_end[0] - self.axis_start[0],
-            self.axis_end[1] - self.axis_start[1],
-        )
+        self.last_length = 0.0
         self.last_width = 0.0
+        self._update_geometry()
 
-    def _update_control_geometry(self):
-        """Publish the tape-defined control axis and asymmetric ball ROI."""
+    def _update_geometry(self):
         self.axis_start = self.fixed_left_endpoint
-        self.axis_end = self.physical_right_endpoint
+        self.axis_end = self.right_endpoint
         self.ball_quad = quadrilateral_from_axis(
             self.axis_start,
             self.axis_end,
             self.frame_width,
             self.frame_height,
-            self.roi_along_margin_px,
+            0,
             self.roi_lateral_margin_px,
             start_along_margin_px=self.roi_start_margin_px,
-            end_along_margin_px=self.roi_along_margin_px,
+            end_along_margin_px=0,
         )
         self.ball_roi = roi_from_axis(
             self.axis_start,
             self.axis_end,
             self.frame_width,
             self.frame_height,
-            self.roi_along_margin_px,
+            0,
             self.roi_lateral_margin_px,
             start_along_margin_px=self.roi_start_margin_px,
-            end_along_margin_px=self.roi_along_margin_px,
-        )
-
-    def _find(self, img):
-        return img.find_blobs(
-            self.thresholds,
-            roi=list(self.right_search_roi),
-            x_stride=self.x_stride,
-            y_stride=self.y_stride,
-            area_threshold=self.min_pixels,
-            pixels_threshold=self.min_pixels,
-            merge=False,
-            margin=0,
+            end_along_margin_px=0,
         )
 
     def _candidate(self, blob):
         try:
-            left = int(blob.x())
-            width = int(blob.w())
-            height = int(blob.h())
+            pose = pose_from_corners(blob.mini_corners())
             pixels = int(blob.pixels())
-            blob_center_x = float(blob.cx())
-            center_y = float(blob.cy())
         except Exception:
             return None
-        if width < self.min_width_px or width > self.max_width_px:
+        if pose is None or pixels < self.min_pixels:
             return None
-        if height < self.min_height_px or height > self.max_height_px:
-            return None
-        if pixels < self.min_pixels:
-            return None
-        center_x = (
-            float(left + width - 1) + self.endpoint_x_offset_px
-            if self.endpoint_from_blob_right_edge
-            else blob_center_x
-        )
-        if (
-            self.expected_right_x is not None
-            and self.max_right_x_distance_px > 0.0
-            and abs(center_x - self.expected_right_x)
-            > self.max_right_x_distance_px
+        length = pose["length"]
+        width = pose["width"]
+        if not (
+            self.min_length_px <= length <= self.max_length_px
+            and self.min_width_px <= width <= self.max_width_px
         ):
             return None
-
-        endpoint_x = (
-            center_x if self.fixed_right_x is None else self.fixed_right_x
-        )
+        start_x = pose["start"][0]
+        right_x = pose["end"][0] - self.endpoint_inset_px * pose["unit"][0]
+        right_y = pose["end"][1] - self.endpoint_inset_px * pose["unit"][1]
+        if start_x > self.max_entry_x:
+            return None
         if (
-            self.has_measurement
-            and self.age_frames <= self.max_stale_frames
-            and self.max_right_y_step_px > 0.0
-            and abs(center_y - self.physical_right_endpoint[1])
-            > self.max_right_y_step_px
+            abs(right_x - self.fallback_right_endpoint[0])
+            > self.max_right_x_motion_px
+            or abs(right_y - self.fallback_right_endpoint[1])
+            > self.max_right_y_motion_px
         ):
             return None
-
-        delta_x = endpoint_x - self.fixed_left_endpoint[0]
-        delta_y = center_y - self.fixed_left_endpoint[1]
-        length = math.hypot(delta_x, delta_y)
-        if (
-            length < self.min_axis_length_px
-            or length > self.max_axis_length_px
-        ):
-            return None
-        angle = math.atan2(delta_y, delta_x)
-        if (
-            self.max_abs_angle_rad > 0.0
-            and abs(angle) > self.max_abs_angle_rad
-        ):
-            return None
-
-        x_error = (
-            0.0
-            if self.expected_right_x is None
-            else abs(center_x - self.expected_right_x)
+        continuity_error = math.hypot(
+            right_x - self.right_endpoint[0],
+            right_y - self.right_endpoint[1],
         )
         score = (
-            float(pixels)
-            + 2.0 * float(height)
-            + float(width)
-            - 3.0 * x_error
+            length
+            + 0.02 * float(pixels)
+            - 0.5 * continuity_error
         )
-        return score, (endpoint_x, center_y), length, min(width, height)
+        return score, (right_x, right_y), length, width
 
     def update(self, img, frame_id):
         measured = False
         raw_blob_count = 0
-        scheduled = (
+        if (
             not self.has_measurement
             or int(frame_id) % self.detect_interval_frames == 0
-        )
-        if scheduled:
-            blobs = self._find(img)
+        ):
+            blobs = img.find_blobs(
+                self.thresholds,
+                roi=list(self.search_roi),
+                x_stride=self.x_stride,
+                y_stride=self.y_stride,
+                area_threshold=self.min_pixels,
+                pixels_threshold=self.min_pixels,
+                merge=False,
+                margin=0,
+            )
             raw_blob_count = len(blobs)
-            candidates = []
-            for blob in blobs:
-                candidate = self._candidate(blob)
-                if candidate is not None:
-                    candidates.append(candidate)
+            candidates = [
+                candidate
+                for candidate in (
+                    self._candidate(blob) for blob in blobs
+                )
+                if candidate is not None
+            ]
             if candidates:
-                candidates.sort(key=lambda item: item[0], reverse=True)
-                score, right_endpoint, length, marker_width = candidates[0]
-                if self.has_measurement:
-                    alpha = self.smoothing_alpha
-                    self.physical_right_endpoint = (
-                        self.physical_right_endpoint[0]
-                        + alpha
-                        * (
-                            right_endpoint[0]
-                            - self.physical_right_endpoint[0]
-                        ),
-                        self.physical_right_endpoint[1]
-                        + alpha
-                        * (
-                            right_endpoint[1]
-                            - self.physical_right_endpoint[1]
-                        ),
-                    )
-                else:
-                    self.physical_right_endpoint = right_endpoint
-                self._update_control_geometry()
+                score, endpoint, segment_length, segment_width = max(
+                    candidates, key=lambda item: item[0]
+                )
+                alpha = (
+                    self.smoothing_alpha
+                    if self.has_measurement
+                    else 1.0
+                )
+                self.right_endpoint = (
+                    self.right_endpoint[0]
+                    + alpha * (endpoint[0] - self.right_endpoint[0]),
+                    self.right_endpoint[1]
+                    + alpha * (endpoint[1] - self.right_endpoint[1]),
+                )
                 self.has_measurement = True
                 self.age_frames = 0
                 self.last_score = float(score)
-                self.last_length = float(length)
-                self.last_width = float(marker_width)
+                self.last_length = float(segment_length)
+                self.last_width = float(segment_width)
+                self._update_geometry()
                 measured = True
 
         if not measured:
             self.age_frames += 1
+
         return {
             "axis_start": self.axis_start,
             "axis_end": self.axis_end,
             "ball_roi": self.ball_roi,
             "ball_quad": self.ball_quad,
             "measured": measured,
-            "valid": bool(
-                self.has_measurement
-                and self.age_frames <= self.max_stale_frames
-            ),
+            "valid": True,
             "age_frames": int(self.age_frames),
             "raw_blob_count": int(raw_blob_count),
-            "search_roi": self.right_search_roi,
-            "fell_back": False,
+            "search_roi": self.search_roi,
+            "fell_back": not self.has_measurement,
             "score": float(self.last_score),
             "length": float(self.last_length),
             "width": float(self.last_width),
+            "mode": "fixed_left_endpoint",
         }

@@ -178,6 +178,10 @@ def _tracking_summary(tracking):
         "measured": bool(tracking.get("measured")),
         "valid": bool(tracking.get("valid")),
         "position": tracking.get("position"),
+        "position_px": tracking.get("position_px"),
+        "travel_position_px": tracking.get("travel_position_px"),
+        "travel_length_px": tracking.get("travel_length_px"),
+        "target_axis_px": tracking.get("target_axis_px"),
         "error_px": tracking.get("error_px"),
         "lateral_px": tracking.get("lateral_px"),
         "velocity_px_s": tracking.get("velocity_px_s"),
@@ -187,6 +191,10 @@ def _tracking_summary(tracking):
         "fps": tracking.get("fps"),
         "pipe_valid": bool(tracking.get("pipe_valid")),
         "pipe_age_frames": tracking.get("pipe_age_frames"),
+        "axis_x0": tracking.get("axis_x0"),
+        "axis_y0": tracking.get("axis_y0"),
+        "axis_x1": tracking.get("axis_x1"),
+        "axis_y1": tracking.get("axis_y1"),
     }
 
 

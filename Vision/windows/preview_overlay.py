@@ -98,17 +98,34 @@ def _draw_scene_overlay(frame, tracking, status, synchronized):
         cv2.line(frame, axis_start, axis_end, (0, 220, 0), 2)
         config = (status or {}).get("config") or {}
         target_position = float(config.get("target_position", 0.5))
+        source_dx = float(axis_source_end[0] - axis_source_start[0])
+        source_dy = float(axis_source_end[1] - axis_source_start[1])
+        source_length = max(
+            1.0, (source_dx * source_dx + source_dy * source_dy) ** 0.5
+        )
+        travel_start = max(
+            0.0, float(config.get("travel_start_px", 0.0))
+        )
+        travel_end = max(
+            0.0, float(config.get("travel_end_px", 0.0))
+        )
+        travel_length = max(
+            1.0, source_length - travel_start - travel_end
+        )
+        target_fraction = (
+            travel_start + target_position * travel_length
+        ) / source_length
         target = (
             int(
                 round(
                     axis_start[0]
-                    + target_position * (axis_end[0] - axis_start[0])
+                    + target_fraction * (axis_end[0] - axis_start[0])
                 )
             ),
             int(
                 round(
                     axis_start[1]
-                    + target_position * (axis_end[1] - axis_start[1])
+                    + target_fraction * (axis_end[1] - axis_start[1])
                 )
             ),
         )

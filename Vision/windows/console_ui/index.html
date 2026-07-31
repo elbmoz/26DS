@@ -250,6 +250,26 @@
         </label>
         <button class="button accent full" type="submit">应用 AI 配置</button>
       </form>
+      <section class="travel-calibration" aria-labelledby="travel-calibration-title">
+        <div class="travel-calibration-heading">
+          <div>
+            <p class="eyebrow">MECHANICAL TRAVEL</p>
+            <h4 id="travel-calibration-title">钢球机械行程标定</h4>
+          </div>
+          <span id="travel-calibration-state" class="verdict neutral">等待有效钢球</span>
+        </div>
+        <p class="field-note">不要修改绿线端点。把钢球静止放在机械极限，控制台会采用最近稳定测量的中位数。</p>
+        <dl class="travel-calibration-values">
+          <div><dt>当前轴向球心</dt><dd id="travel-raw-position">—</dd></div>
+          <div><dt>有效行程</dt><dd id="travel-length">—</dd></div>
+          <div><dt>左端球心偏移</dt><dd id="travel-start-offset">—</dd></div>
+          <div><dt>右端球心偏移</dt><dd id="travel-end-offset">—</dd></div>
+        </dl>
+        <div class="travel-calibration-actions">
+          <button id="calibrate-left-button" class="button subtle" type="button">当前位置设为 0%</button>
+          <button id="calibrate-right-button" class="button subtle" type="button">当前位置设为 100%</button>
+        </div>
+      </section>
       <p class="safety-note">配置直接写入 MaixCAM 并持久化；不会修改电机或 PID 参数。模型加载失败时保留旧模型。</p>
     </section>
 

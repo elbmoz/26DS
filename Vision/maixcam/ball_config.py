@@ -94,52 +94,37 @@ AI_CONFIDENCE = 0.13
 AI_VALID_CONFIDENCE = 0.13
 AI_IOU = 0.45
 AI_COAST_FRAMES = 2
+# Ball-centre travel is calibrated independently from the visible pipe ends.
+# These defaults preserve the raw full-axis mapping until the operator uses
+# the two endpoint calibration buttons in the Windows console.
+AI_TRAVEL_START_PX = 0.0
+AI_TRAVEL_END_PX = 0.0
 
-# The camera, pivot and pipe travel are mechanically fixed.  Detect only a
-# short central section of the green pipe and use its long edge for angle;
-# the calibrated centre and full travel length remain constant.
+# The left black tape is camera-fixed.  The right end moves in both X and Y,
+# so fit only the long green segment entering this small right-side window.
 PIPE_POSE_ENABLED = True
 REQUIRE_VALID_PIPE_POSE = True
-PIPE_POSE_MODE = "right_tape"
-
-# The former endpoint screws have been removed. The left black tape marker is
-# camera-fixed and the right marker follows pipe rotation. Black pixels on
-# the right merge into the dark background, so use the final green component
-# immediately inside the tape as the observable. The old crop ended at
-# detector x=397 and manufactured a false edge at its own boundary. A native
-# 480x360 RGB probe places the true green edge at x=422 and the tape's
-# physical outer trajectory at x=432. Scan only that outer strip, reject the
-# x=397 shadow, then project onto the fixed outer trajectory.
-PIPE_TAPE_LEFT_ENDPOINT = AXIS_START
-PIPE_TAPE_RIGHT_ENDPOINT = AXIS_END
-PIPE_TAPE_RIGHT_SEARCH_ROI = _roi(500, 80, 93, 125)
-PIPE_TAPE_LAB_THRESHOLDS = (
+PIPE_ANCHOR_SEARCH_ROI = _roi(380, 60, 220, 130)
+PIPE_ANCHOR_LAB_THRESHOLDS = (
     (5, 90, -55, -12, -15, 40),
 )
-PIPE_TAPE_DETECT_INTERVAL_FRAMES = 4
-PIPE_TAPE_MIN_WIDTH_PX = _sx(16)
-PIPE_TAPE_MAX_WIDTH_PX = _sx(90)
-PIPE_TAPE_MIN_HEIGHT_PX = _sy(8)
-PIPE_TAPE_MAX_HEIGHT_PX = _sy(48)
-PIPE_TAPE_MIN_PIXELS = _area(30)
-# This pass only runs every fourth frame. Keep enough samples for the narrow
-# green end segment at steep poses; 5 x 4 fragmented it and allowed the upper
-# reflection to seed a stale y=62 pose while the real endpoint was near y=84.
-PIPE_TAPE_X_STRIDE = 4
-PIPE_TAPE_Y_STRIDE = 3
-PIPE_TAPE_EXPECTED_RIGHT_X = _sx(563)
-PIPE_TAPE_MAX_RIGHT_X_DISTANCE_PX = _sx(27)
-# The right endpoint has one mechanical degree of freedom in this view.
-PIPE_TAPE_FIXED_RIGHT_X = _sx(576)
-# Reject a one-update y jump that cannot be produced by the mechanism.  This
-# is deliberately checked before smoothing so a shadow cannot drag the pose.
-PIPE_TAPE_MAX_RIGHT_Y_STEP_PX = _sy(24)
-PIPE_TAPE_MIN_AXIS_LENGTH_PX = _sx(540)
-PIPE_TAPE_MAX_AXIS_LENGTH_PX = _sx(620)
-PIPE_TAPE_ENDPOINT_FROM_BLOB_RIGHT_EDGE = True
-# The green edge selects the correct component; the control endpoint is
-# projected separately onto the calibrated tape-outer trajectory above.
-PIPE_TAPE_ENDPOINT_X_OFFSET_PX = 0
+PIPE_ANCHOR_DETECT_INTERVAL_FRAMES = 4
+PIPE_ANCHOR_LENGTH_RANGE_PX = (_sx(90), _sx(240))
+PIPE_ANCHOR_WIDTH_RANGE_PX = (_sy(8), _sy(48))
+PIPE_ANCHOR_MIN_PIXELS = _area(90)
+PIPE_ANCHOR_STRIDE = (4, 3)
+PIPE_ANCHOR_MAX_ENTRY_GAP_PX = _sx(40)
+# The segmented green highlight extends slightly into the taped end. Move the
+# fitted endpoint back to the tape reference used by the control axis.
+PIPE_ANCHOR_ENDPOINT_INSET_PX = _sx(19)
+# Anything outside this 2-D mechanical travel band is a reflection or the
+# workbench rather than the physical rail end.
+PIPE_ANCHOR_MAX_RIGHT_X_MOTION_PX = _sx(70)
+PIPE_ANCHOR_MAX_RIGHT_Y_MOTION_PX = _sy(45)
+
+# Legacy colour-detector settings retained only for rollback.
+PIPE_TAPE_RIGHT_SEARCH_ROI = PIPE_ANCHOR_SEARCH_ROI
+PIPE_TAPE_LAB_THRESHOLDS = PIPE_ANCHOR_LAB_THRESHOLDS
 PIPE_FIXED_SEARCH_ROI = True
 PIPE_SEARCH_ROI = _roi(225, 120, 135, 42)
 PIPE_LAB_THRESHOLDS = (

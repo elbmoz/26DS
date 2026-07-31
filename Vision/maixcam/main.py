@@ -9,7 +9,7 @@ from ai_ball_detector import AIBallDetector, AIVisionConfig
 from ball_detector import LabBallDetector
 from ball_tracker_core import BallTracker
 from loop_timing import periodic_due
-from pipe_pose import GreenPipePoseDetector, TapeEndpointPipePoseDetector
+from pipe_pose import AnchoredPipePoseDetector, GreenPipePoseDetector
 from stm32_link import Stm32Link
 from vision_v2 import BallVisionV2, VisionV2Config
 from stream_protocol import validate_parameters
@@ -92,6 +92,12 @@ def build_detector():
                 axis_end=cfg.AXIS_END,
                 target_position=runtime_values.get(
                     "target_position", cfg.TARGET_POSITION
+                ),
+                travel_start_px=runtime_values.get(
+                    "travel_start_px", cfg.AI_TRAVEL_START_PX
+                ),
+                travel_end_px=runtime_values.get(
+                    "travel_end_px", cfg.AI_TRAVEL_END_PX
                 ),
                 confidence=runtime_values.get(
                     "confidence", cfg.AI_CONFIDENCE
@@ -237,45 +243,40 @@ def build_tracker():
 
 
 def build_pipe_detector():
-    if cfg.VISION_ALGORITHM in ("ai", "v2"):
+    if cfg.VISION_ALGORITHM == "v2":
         return None
     if not cfg.PIPE_POSE_ENABLED:
         return None
-    if cfg.PIPE_POSE_MODE == "right_tape":
-        return TapeEndpointPipePoseDetector(
+    if cfg.VISION_ALGORITHM == "ai":
+        return AnchoredPipePoseDetector(
             frame_width=cfg.CAMERA_WIDTH,
             frame_height=cfg.CAMERA_HEIGHT,
-            right_search_roi=cfg.PIPE_TAPE_RIGHT_SEARCH_ROI,
-            fallback_roi=cfg.ROI,
-            fixed_left_endpoint=cfg.PIPE_TAPE_LEFT_ENDPOINT,
-            fallback_right_endpoint=cfg.PIPE_TAPE_RIGHT_ENDPOINT,
-            thresholds=cfg.PIPE_TAPE_LAB_THRESHOLDS,
-            detect_interval_frames=cfg.PIPE_TAPE_DETECT_INTERVAL_FRAMES,
-            min_width_px=cfg.PIPE_TAPE_MIN_WIDTH_PX,
-            max_width_px=cfg.PIPE_TAPE_MAX_WIDTH_PX,
-            min_height_px=cfg.PIPE_TAPE_MIN_HEIGHT_PX,
-            max_height_px=cfg.PIPE_TAPE_MAX_HEIGHT_PX,
-            min_pixels=cfg.PIPE_TAPE_MIN_PIXELS,
-            x_stride=cfg.PIPE_TAPE_X_STRIDE,
-            y_stride=cfg.PIPE_TAPE_Y_STRIDE,
-            expected_right_x=cfg.PIPE_TAPE_EXPECTED_RIGHT_X,
-            max_right_x_distance_px=(
-                cfg.PIPE_TAPE_MAX_RIGHT_X_DISTANCE_PX
+            search_roi=cfg.PIPE_ANCHOR_SEARCH_ROI,
+            fixed_left_endpoint=cfg.AXIS_START,
+            fallback_right_endpoint=cfg.AXIS_END,
+            thresholds=cfg.PIPE_ANCHOR_LAB_THRESHOLDS,
+            detect_interval_frames=(
+                cfg.PIPE_ANCHOR_DETECT_INTERVAL_FRAMES
             ),
-            fixed_right_x=cfg.PIPE_TAPE_FIXED_RIGHT_X,
-            max_right_y_step_px=cfg.PIPE_TAPE_MAX_RIGHT_Y_STEP_PX,
-            min_axis_length_px=cfg.PIPE_TAPE_MIN_AXIS_LENGTH_PX,
-            max_axis_length_px=cfg.PIPE_TAPE_MAX_AXIS_LENGTH_PX,
-            max_abs_angle_deg=cfg.PIPE_MAX_ABS_ANGLE_DEG,
-            endpoint_from_blob_right_edge=(
-                cfg.PIPE_TAPE_ENDPOINT_FROM_BLOB_RIGHT_EDGE
+            length_range_px=cfg.PIPE_ANCHOR_LENGTH_RANGE_PX,
+            width_range_px=cfg.PIPE_ANCHOR_WIDTH_RANGE_PX,
+            min_pixels=cfg.PIPE_ANCHOR_MIN_PIXELS,
+            stride=cfg.PIPE_ANCHOR_STRIDE,
+            max_entry_gap_px=(
+                cfg.PIPE_ANCHOR_MAX_ENTRY_GAP_PX
             ),
-            endpoint_x_offset_px=cfg.PIPE_TAPE_ENDPOINT_X_OFFSET_PX,
+            endpoint_inset_px=(
+                cfg.PIPE_ANCHOR_ENDPOINT_INSET_PX
+            ),
+            max_right_x_motion_px=(
+                cfg.PIPE_ANCHOR_MAX_RIGHT_X_MOTION_PX
+            ),
+            max_right_y_motion_px=(
+                cfg.PIPE_ANCHOR_MAX_RIGHT_Y_MOTION_PX
+            ),
             smoothing_alpha=cfg.PIPE_SMOOTHING_ALPHA,
-            roi_along_margin_px=cfg.PIPE_ROI_ALONG_MARGIN_PX,
             roi_lateral_margin_px=cfg.PIPE_ROI_LATERAL_MARGIN_PX,
             roi_start_margin_px=cfg.PIPE_ROI_START_MARGIN_PX,
-            max_stale_frames=cfg.PIPE_MAX_STALE_FRAMES,
         )
     return GreenPipePoseDetector(
         frame_width=cfg.CAMERA_WIDTH,
@@ -321,7 +322,19 @@ def build_pipe_detector():
 
 def process_frame(img, now_ms, frame_id, detector, tracker, pipe_detector):
     """Update pipe geometry, detect the ball and advance its tracker."""
-    if cfg.VISION_ALGORITHM in ("ai", "v2"):
+    if cfg.VISION_ALGORITHM == "ai":
+        pipe_state = (
+            None
+            if pipe_detector is None
+            else pipe_detector.update(img, frame_id)
+        )
+        return detector.process(
+            img,
+            now_ms,
+            frame_id,
+            pipe_state=pipe_state,
+        )
+    if cfg.VISION_ALGORITHM == "v2":
         return detector.process(img, now_ms, frame_id)
     if pipe_detector is None:
         pipe_state = {
@@ -391,11 +404,21 @@ def draw_overlay(img, detection, state, fps_value, measured_ratio):
     axis_y0 = int(round(axis_y0))
     axis_x1 = int(round(axis_x1))
     axis_y1 = int(round(axis_y1))
+    axis_length = max(
+        1.0,
+        ((axis_x1 - axis_x0) ** 2 + (axis_y1 - axis_y0) ** 2) ** 0.5,
+    )
+    target_fraction = state.get("target_axis_px")
+    target_fraction = (
+        cfg.TARGET_POSITION
+        if target_fraction is None
+        else float(target_fraction) / axis_length
+    )
     target_x = int(
-        round(axis_x0 + cfg.TARGET_POSITION * (axis_x1 - axis_x0))
+        round(axis_x0 + target_fraction * (axis_x1 - axis_x0))
     )
     target_y = int(
-        round(axis_y0 + cfg.TARGET_POSITION * (axis_y1 - axis_y0))
+        round(axis_y0 + target_fraction * (axis_y1 - axis_y0))
     )
 
     roi_quad = detection.get("roi_quad")

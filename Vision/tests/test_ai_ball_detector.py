@@ -116,6 +116,44 @@ class AIBallDetectorTests(unittest.TestCase):
         self.assertTrue(second["valid"])
         self.assertFalse(third["valid"])
 
+    def test_dynamic_pipe_axis_keeps_filtered_image_point_stable(self):
+        model = FakeModel()
+        model.objects = [FakeObject(100, 60, 12, 14, 0.75)]
+        detector = make_detector(model)
+        detector.process(FakeImage(), 1000, 0)
+        old_axis = detector.pipe.axis
+        old_point = old_axis.point(
+            detector.position_px, detector.lateral_px
+        )
+        model.objects = []
+        pipe_state = {
+            "axis_start": (20, 100),
+            "axis_end": (428, 108),
+            "ball_roi": (8, 70, 430, 70),
+            "ball_quad": ((8, 70), (438, 78), (438, 138), (8, 130)),
+            "measured": True,
+            "valid": True,
+            "age_frames": 0,
+            "raw_blob_count": 1,
+            "score": 900.0,
+            "length": 82.0,
+            "width": 14.0,
+            "mode": "fixed_left_endpoint",
+        }
+
+        detection, _state = detector.process(
+            FakeImage(), 1001, 1, pipe_state=pipe_state
+        )
+
+        new_point = detector.pipe.axis.point(
+            detector.position_px, detector.lateral_px
+        )
+        self.assertAlmostEqual(new_point.x, old_point.x)
+        self.assertAlmostEqual(new_point.y, old_point.y)
+        self.assertEqual(detection["pipe"], pipe_state)
+        self.assertEqual(detection["axis_end"], (428.0, 108.0))
+        self.assertEqual(detection["roi_quad"], pipe_state["ball_quad"])
+
     def test_low_confidence_box_is_monitor_only(self):
         model = FakeModel()
         model.objects = [FakeObject(100, 60, 12, 14, 0.35)]
@@ -167,6 +205,8 @@ class AIBallDetectorTests(unittest.TestCase):
                     "iou": 0.4,
                     "coast_frames": 4,
                     "target_position": 0.6,
+                    "travel_start_px": 14.5,
+                    "travel_end_px": 17.0,
                 }
             )
 
@@ -174,7 +214,31 @@ class AIBallDetectorTests(unittest.TestCase):
             self.assertEqual(saved["confidence"], 0.13)
             self.assertEqual(saved["valid_confidence"], 0.13)
             self.assertEqual(saved["coast_frames"], 4)
+            self.assertEqual(saved["travel_start_px"], 14.5)
+            self.assertEqual(saved["travel_end_px"], 17.0)
             self.assertEqual(detector.config.target_position, 0.6)
+
+    def test_mechanical_travel_calibration_maps_ball_centres_to_limits(self):
+        detector = make_detector()
+        detector.apply_runtime_config(
+            {"travel_start_px": 15.0, "travel_end_px": 18.0}
+        )
+        detector.position_px = 15.0
+        detector.radius = 10.0
+        left = detector._state(True)
+        detector.position_px = detector.pipe.axis.length - 18.0
+        right = detector._state(True)
+
+        self.assertEqual(left["position"], 0.0)
+        self.assertEqual(right["position"], 1.0)
+        self.assertAlmostEqual(left["travel_position_px"], 0.0)
+        self.assertAlmostEqual(
+            right["travel_position_px"], right["travel_length_px"]
+        )
+        self.assertAlmostEqual(
+            left["target_axis_px"],
+            15.0 + 0.5 * left["travel_length_px"],
+        )
 
     def test_model_switch_replaces_model_only_after_loading(self):
         detector = make_detector()

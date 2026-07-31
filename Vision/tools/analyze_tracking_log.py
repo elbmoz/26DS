@@ -372,10 +372,23 @@ def analyze(log_path, video_path=None, return_metrics=False):
     if algorithm:
         lines.insert(0, "algorithm: {}".format(algorithm))
     if algorithm == "ai":
-        lines.append(
-            "coordinate reference: fixed installation calibration; "
-            "no image-based pipe pose was evaluated"
+        pipe_updates = sum(
+            1
+            for row in rows
+            if _boolean(row.get("pipe_measured", False))
         )
+        if pipe_updates:
+            lines.append(
+                "coordinate reference: fixed left anchor + measured pipe "
+                "right endpoint; pipe update ratio {:.2%}".format(
+                    pipe_updates / len(rows)
+                )
+            )
+        else:
+            lines.append(
+                "coordinate reference: fixed installation calibration; "
+                "no image-based pipe pose was evaluated"
+            )
     if frame_map is not None:
         lines.insert(
             0,

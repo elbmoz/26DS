@@ -19,6 +19,8 @@ TUNABLE_SPECS = {
     "valid_confidence": ("float", 0.01, 0.99),
     "iou": ("float", 0.01, 0.99),
     "target_position": ("float", 0.05, 0.95),
+    "travel_start_px": ("float", 0.0, 120.0),
+    "travel_end_px": ("float", 0.0, 120.0),
     "position_alpha": ("float", 0.05, 1.00),
     "velocity_beta": ("float", 0.00, 1.00),
     "lateral_alpha": ("float", 0.05, 1.00),
@@ -136,6 +138,12 @@ def config_snapshot(detector, tracker):
             "target_position": _rounded(
                 detector.config.target_position
             ),
+            "travel_start_px": _rounded(
+                detector.config.travel_start_px
+            ),
+            "travel_end_px": _rounded(
+                detector.config.travel_end_px
+            ),
             "confidence": _rounded(detector.config.confidence),
             "valid_confidence": _rounded(
                 detector.config.valid_confidence
@@ -197,6 +205,8 @@ def apply_parameters(clean, detector, tracker, config_module):
         supported = {
             "model",
             "target_position",
+            "travel_start_px",
+            "travel_end_px",
             "confidence",
             "valid_confidence",
             "iou",
@@ -213,6 +223,10 @@ def apply_parameters(clean, detector, tracker, config_module):
         detector.apply_runtime_config(clean)
         config_module.AI_MODEL_PATH = detector.config.model_path
         config_module.TARGET_POSITION = detector.config.target_position
+        config_module.AI_TRAVEL_START_PX = (
+            detector.config.travel_start_px
+        )
+        config_module.AI_TRAVEL_END_PX = detector.config.travel_end_px
         config_module.AI_CONFIDENCE = detector.config.confidence
         config_module.AI_VALID_CONFIDENCE = (
             detector.config.valid_confidence
@@ -353,6 +367,15 @@ def make_tracking_packet(
         "radius": _rounded(state["radius"]) if valid else None,
         "position": _rounded(state["position"], 5) if valid else None,
         "position_px": _rounded(state["position_px"]) if valid else None,
+        "travel_position_px": (
+            _rounded(state.get("travel_position_px")) if valid else None
+        ),
+        "travel_length_px": (
+            _rounded(state.get("travel_length_px")) if valid else None
+        ),
+        "target_axis_px": (
+            _rounded(state.get("target_axis_px")) if valid else None
+        ),
         "error_px": int(state["error_px"]) if valid else None,
         "lateral_px": int(state["lateral_px"]) if valid else None,
         "velocity_px_s": (

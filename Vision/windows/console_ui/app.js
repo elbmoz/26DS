@@ -28,6 +28,8 @@ const ui = {
   targetPercent: $("#target-percent"),
   iouPercent: $("#iou-percent"),
   coastFrames: $("#coast-frames"),
+  calibrateLeftButton: $("#calibrate-left-button"),
+  calibrateRightButton: $("#calibrate-right-button"),
   waveGrid: $("#wave-grid"),
   chartPickerToggle: $("#chart-picker-toggle"),
   chartPicker: $("#chart-picker"),
@@ -664,6 +666,17 @@ function appendTelemetrySample(
   telemetryHistory.push({
     t: now,
     position: valid ? finiteOrNull(tracking.position) : null,
+    axisPosition: valid ? finiteOrNull(tracking.position_px) : null,
+    axisLength:
+      Number.isFinite(Number(tracking.axis_x0)) &&
+      Number.isFinite(Number(tracking.axis_y0)) &&
+      Number.isFinite(Number(tracking.axis_x1)) &&
+      Number.isFinite(Number(tracking.axis_y1))
+        ? Math.hypot(
+            Number(tracking.axis_x1) - Number(tracking.axis_x0),
+            Number(tracking.axis_y1) - Number(tracking.axis_y0),
+          )
+        : null,
     velocity: valid ? finiteOrNull(tracking.velocity_px_s) : null,
     fps: finiteOrNull(tracking.fps),
     detect: finiteOrNull(tracking.detect_ms),
@@ -791,6 +804,78 @@ function renderSimulator(tracking, config) {
   }
 }
 
+function median(values) {
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2
+    ? sorted[middle]
+    : 0.5 * (sorted[middle - 1] + sorted[middle]);
+}
+
+function travelCalibrationEstimate(side) {
+  const cutoff = Date.now() - 1200;
+  const samples = telemetryHistory
+    .filter(
+      (sample) =>
+        sample.t >= cutoff &&
+        sample.valid &&
+        sample.measured &&
+        Number.isFinite(sample.axisPosition) &&
+        Number.isFinite(sample.axisLength),
+    )
+    .slice(-24);
+  const values = samples.map((sample) =>
+    side === "left"
+      ? sample.axisPosition
+      : sample.axisLength - sample.axisPosition,
+  );
+  if (values.length < 5) {
+    return { ready: false, count: values.length, value: null, spread: null };
+  }
+  const spread = Math.max(...values) - Math.min(...values);
+  return {
+    ready: spread <= 2.5,
+    count: values.length,
+    value: median(values),
+    spread,
+  };
+}
+
+function renderTravelCalibration(tracking, config) {
+  const axisPosition = finiteOrNull(tracking.position_px);
+  const travelLength = finiteOrNull(tracking.travel_length_px);
+  const startOffset = finiteOrNull(config.travel_start_px) ?? 0;
+  const endOffset = finiteOrNull(config.travel_end_px) ?? 0;
+  text(
+    "travel-raw-position",
+    axisPosition == null ? "—" : `${axisPosition.toFixed(1)} px`,
+  );
+  text(
+    "travel-length",
+    travelLength == null ? "—" : `${travelLength.toFixed(1)} px`,
+  );
+  text("travel-start-offset", `${startOffset.toFixed(1)} px`);
+  text("travel-end-offset", `${endOffset.toFixed(1)} px`);
+
+  const left = travelCalibrationEstimate("left");
+  const right = travelCalibrationEstimate("right");
+  const operationRunning =
+    latestState?.operation?.state === "running";
+  ui.calibrateLeftButton.disabled = operationRunning || !left.ready;
+  ui.calibrateRightButton.disabled = operationRunning || !right.ready;
+
+  const badge = $("#travel-calibration-state");
+  const best = Math.max(left.count, right.count);
+  if (!tracking.valid || best < 5) {
+    setVerdict(badge, "等待有效钢球", "neutral");
+  } else if (!left.ready && !right.ready) {
+    setVerdict(badge, "请让钢球静止", "warning");
+  } else {
+    setVerdict(badge, `稳定 ${best} 帧`, "good");
+  }
+}
+
 function renderLiveTelemetry(
   tracking = {},
   video = {},
@@ -844,6 +929,7 @@ function renderLiveTelemetry(
       ? `${formatNumber(tracking.detect_ms, 0)} / ${formatNumber(video.pipeline_latency_ms, 0)} ms`
       : "—",
   );
+  renderTravelCalibration(tracking, config);
 }
 
 function ensureTelemetryStream(monitor) {
@@ -2023,6 +2109,8 @@ function renderState(state) {
       button.id === "inspector-toggle" ||
       button.id === "inspector-close" ||
       button.id === "chart-live" ||
+      button.id === "calibrate-left-button" ||
+      button.id === "calibrate-right-button" ||
       button.classList.contains("chart-expand") ||
       button.closest(".chart-selector") ||
       button.dataset.windowSeconds
@@ -2215,6 +2303,32 @@ $$("[data-confidence-preset]").forEach((button) => {
     setConfidencePercent(button.dataset.confidencePreset);
     markAIFormDirty();
   });
+});
+
+async function calibrateTravelEndpoint(side) {
+  const estimate = travelCalibrationEstimate(side);
+  if (!estimate.ready || estimate.value == null) {
+    showToast("钢球位置尚未稳定，请保持静止约 1 秒", true);
+    return;
+  }
+  const parameter =
+    side === "left" ? "travel_start_px" : "travel_end_px";
+  const percent = side === "left" ? "0%" : "100%";
+  const value = Math.round(estimate.value * 1000) / 1000;
+  await requestAction(
+    "config",
+    { params: { [parameter]: value } },
+    `已采集 ${estimate.count} 帧中位数，正在设置 ${percent}`,
+  );
+  setVerdict($("#travel-calibration-state"), "等待设备确认", "warning");
+}
+
+ui.calibrateLeftButton.addEventListener("click", () => {
+  calibrateTravelEndpoint("left");
+});
+
+ui.calibrateRightButton.addEventListener("click", () => {
+  calibrateTravelEndpoint("right");
 });
 
 ui.form.addEventListener("submit", async (event) => {

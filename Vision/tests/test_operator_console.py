@@ -52,7 +52,13 @@ class OperatorConsoleHttpTests(unittest.TestCase):
     def test_serves_dashboard_state_and_frame(self):
         with urlopen(self.base_url + "/", timeout=2) as response:
             html = response.read().decode("utf-8")
+        with urlopen(self.base_url + "/app.js", timeout=2) as response:
+            script = response.read().decode("utf-8")
         self.assertIn('id="metric-position"', html)
+        self.assertIn('id="calibrate-left-button"', html)
+        self.assertIn('id="calibrate-right-button"', html)
+        self.assertIn("travel_start_px", script)
+        self.assertIn("travel_end_px", script)
         self.assertIn('id="wave-grid"', html)
         self.assertIn('id="chart-picker-toggle"', html)
 

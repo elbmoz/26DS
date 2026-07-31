@@ -57,6 +57,8 @@ class AIVisionConfig:
         "axis_start",
         "axis_end",
         "target_position",
+        "travel_start_px",
+        "travel_end_px",
         "confidence",
         "valid_confidence",
         "iou",
@@ -72,6 +74,8 @@ class AIVisionConfig:
         axis_start,
         axis_end,
         target_position,
+        travel_start_px=0.0,
+        travel_end_px=0.0,
         confidence=0.25,
         valid_confidence=0.50,
         iou=0.45,
@@ -84,6 +88,8 @@ class AIVisionConfig:
         self.axis_start = tuple(axis_start)
         self.axis_end = tuple(axis_end)
         self.target_position = _clamp(float(target_position), 0.0, 1.0)
+        self.travel_start_px = max(0.0, float(travel_start_px))
+        self.travel_end_px = max(0.0, float(travel_end_px))
         self.confidence = _clamp(float(confidence), 0.01, 0.99)
         self.valid_confidence = _clamp(
             float(valid_confidence), self.confidence, 0.99
@@ -192,6 +198,8 @@ class AIBallDetector:
         return {
             "model": str(values["model"]),
             "target_position": float(values["target_position"]),
+            "travel_start_px": float(values["travel_start_px"]),
+            "travel_end_px": float(values["travel_end_px"]),
             "confidence": float(values["confidence"]),
             "valid_confidence": float(values["valid_confidence"]),
             "iou": float(values["iou"]),
@@ -236,12 +244,35 @@ class AIBallDetector:
         self.misses = 0
         self.quality = 0.0
 
+    def set_axis(self, axis_start, axis_end, roi=None):
+        """Change pipe geometry without moving the filtered image point."""
+        previous_axis = self.pipe.axis
+        point = (
+            None
+            if self.position_px is None
+            else previous_axis.point(self.position_px, self.lateral_px)
+        )
+        next_axis = Axis(axis_start, axis_end)
+        self.pipe.axis = next_axis
+        if roi is not None:
+            self.pipe.roi = tuple(int(value) for value in roi)
+        if point is not None:
+            along, lateral = next_axis.project(point.x, point.y)
+            self.position_px = _clamp(along, 0.0, next_axis.length)
+            self.lateral_px = lateral
+
     def apply_runtime_config(self, params):
         """Atomically validate, load and persist an AI configuration."""
         values = {
             "model": params.get("model", self.config.model_path),
             "target_position": params.get(
                 "target_position", self.config.target_position
+            ),
+            "travel_start_px": params.get(
+                "travel_start_px", self.config.travel_start_px
+            ),
+            "travel_end_px": params.get(
+                "travel_end_px", self.config.travel_end_px
             ),
             "confidence": params.get(
                 "confidence", self.config.confidence
@@ -260,6 +291,13 @@ class AIBallDetector:
             raise ValueError(
                 "valid_confidence must be >= confidence"
             )
+        travel_start_px = float(values["travel_start_px"])
+        travel_end_px = float(values["travel_end_px"])
+        if (
+            travel_start_px + travel_end_px
+            >= self.pipe.axis.length - 20.0
+        ):
+            raise ValueError("calibrated ball travel is too short")
 
         next_model = None
         next_width = self.input_width
@@ -290,6 +328,8 @@ class AIBallDetector:
         self.config.target_position = _clamp(
             float(values["target_position"]), 0.0, 1.0
         )
+        self.config.travel_start_px = max(0.0, travel_start_px)
+        self.config.travel_end_px = max(0.0, travel_end_px)
         self.config.confidence = _clamp(confidence, 0.01, 0.99)
         self.config.valid_confidence = _clamp(
             valid_confidence, self.config.confidence, 0.99
@@ -339,6 +379,9 @@ class AIBallDetector:
             "radius": 0.0,
             "position": 0.0,
             "position_px": 0.0,
+            "travel_position_px": 0.0,
+            "travel_length_px": 0.0,
+            "target_axis_px": 0.0,
             "error_px": 0,
             "lateral_px": 0,
             "velocity_px_s": 0.0,
@@ -357,8 +400,28 @@ class AIBallDetector:
 
     def _state(self, measured, measurement=None):
         axis = self.pipe.axis
-        position = _clamp(self.position_px, 0.0, axis.length)
-        point = axis.point(position, self.lateral_px)
+        axis_position = _clamp(self.position_px, 0.0, axis.length)
+        travel_start = _clamp(
+            self.config.travel_start_px,
+            0.0,
+            max(0.0, axis.length - 1.0),
+        )
+        travel_end = _clamp(
+            self.config.travel_end_px,
+            0.0,
+            max(0.0, axis.length - travel_start - 1.0),
+        )
+        travel_length = max(1.0, axis.length - travel_start - travel_end)
+        travel_position = _clamp(
+            axis_position - travel_start,
+            0.0,
+            travel_length,
+        )
+        target_axis_px = (
+            travel_start
+            + self.config.target_position * travel_length
+        )
+        point = axis.point(axis_position, self.lateral_px)
         return {
             "valid": True,
             "measured": bool(measured),
@@ -366,14 +429,12 @@ class AIBallDetector:
             "x": point.x,
             "y": point.y,
             "radius": self.radius,
-            "position": position / axis.length,
-            "position_px": position,
-            "error_px": int(
-                round(
-                    position
-                    - self.config.target_position * axis.length
-                )
-            ),
+            "position": travel_position / travel_length,
+            "position_px": axis_position,
+            "travel_position_px": travel_position,
+            "travel_length_px": travel_length,
+            "target_axis_px": target_axis_px,
+            "error_px": int(round(axis_position - target_axis_px)),
             "lateral_px": int(round(self.lateral_px)),
             "velocity_px_s": self.velocity_px_s,
             "quality": self.quality,
@@ -457,7 +518,13 @@ class AIBallDetector:
         self.quality *= 0.7
         return self._state(False)
 
-    def process(self, img, now_ms, frame_id):
+    def process(self, img, now_ms, frame_id, pipe_state=None):
+        if pipe_state is not None:
+            self.set_axis(
+                pipe_state["axis_start"],
+                pipe_state["axis_end"],
+                pipe_state.get("ball_roi"),
+            )
         boxes = self._boxes(img)
         state = self._update(boxes, now_ms)
         axis = self.pipe.axis
@@ -470,20 +537,21 @@ class AIBallDetector:
             )
             for box in boxes
         ]
-        pipe_state = {
-            "axis_start": axis.start.tuple(),
-            "axis_end": axis.end.tuple(),
-            "ball_roi": self.pipe.roi,
-            "ball_quad": None,
-            "measured": False,
-            "valid": True,
-            "age_frames": 0,
-            "raw_blob_count": 0,
-            "score": 0.0,
-            "length": axis.length,
-            "width": self.config.frame_height,
-            "mode": "fixed_calibration",
-        }
+        if pipe_state is None:
+            pipe_state = {
+                "axis_start": axis.start.tuple(),
+                "axis_end": axis.end.tuple(),
+                "ball_roi": self.pipe.roi,
+                "ball_quad": None,
+                "measured": False,
+                "valid": True,
+                "age_frames": 0,
+                "raw_blob_count": 0,
+                "score": 0.0,
+                "length": axis.length,
+                "width": self.config.frame_height,
+                "mode": "fixed_calibration",
+            }
         detection = {
             "algorithm": "ai",
             "model": self.config.model_path,
@@ -499,7 +567,7 @@ class AIBallDetector:
             "used_local": False,
             "axis_start": axis.start.tuple(),
             "axis_end": axis.end.tuple(),
-            "roi_quad": None,
+            "roi_quad": pipe_state.get("ball_quad"),
             "pipe": pipe_state,
         }
         return detection, state

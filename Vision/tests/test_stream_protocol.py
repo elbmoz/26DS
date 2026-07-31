@@ -187,11 +187,15 @@ class StreamProtocolTests(unittest.TestCase):
                 "confidence": 0.13,
                 "valid_confidence": 0.13,
                 "iou": 0.45,
+                "travel_start_px": 14.5,
+                "travel_end_px": 18,
             }
         )
         self.assertFalse(errors)
         self.assertEqual(clean["model"], model)
         self.assertEqual(clean["confidence"], 0.13)
+        self.assertEqual(clean["travel_start_px"], 14.5)
+        self.assertEqual(clean["travel_end_px"], 18)
 
         clean, errors = validate_parameters(
             {

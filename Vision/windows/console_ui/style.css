@@ -1318,6 +1318,72 @@ body.chart-expanded .wave-grid > .wave-panel:not(.expanded) {
   line-height: 1.55;
 }
 
+.travel-calibration {
+  margin-top: 18px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: rgba(67, 214, 177, 0.035);
+}
+
+.travel-calibration-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.travel-calibration-heading h4 {
+  margin: 3px 0 0;
+  color: #d8e1e5;
+  font-size: 12px;
+  font-weight: 620;
+}
+
+.travel-calibration > .field-note {
+  margin: 10px 0 12px;
+}
+
+.travel-calibration-values {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  margin: 0 0 11px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--line);
+}
+
+.travel-calibration-values div {
+  padding: 8px;
+  background: #090e13;
+}
+
+.travel-calibration-values dt {
+  color: var(--muted);
+  font-size: 8px;
+}
+
+.travel-calibration-values dd {
+  margin: 4px 0 0;
+  color: #b9c7cc;
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.travel-calibration-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+}
+
+.travel-calibration-actions .button {
+  min-height: 34px;
+  padding-inline: 8px;
+  font-size: 9px;
+}
+
 .system-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
