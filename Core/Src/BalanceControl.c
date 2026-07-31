@@ -401,7 +401,7 @@ static void BalanceControl_UpdateOuter(uint32_t now,
     }
 
     dt = BalanceControl_GetOuterDt(now);
-    if (ki > 0.0f) {
+    if (ki > 0.0f && freeze_integral == 0U) {
         float integral_limit = BalanceControl_AbsFloat(
             balance_control_config.outer_integral_limit_px_s);
 
