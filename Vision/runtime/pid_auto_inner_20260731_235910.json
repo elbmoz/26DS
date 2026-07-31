@@ -1,0 +1,399 @@
+{
+  "best_config": {
+    "inner_kp": 2.5,
+    "inner_kd": 0.0,
+    "speed_limit": 24.0,
+    "slew": 150.0
+  },
+  "best_score": 4.493675499999999,
+  "trials": [
+    {
+      "changed": "baseline",
+      "config": {
+        "inner_kp": 2.5,
+        "inner_kd": 0.0,
+        "speed_limit": 24.0,
+        "slew": 150.0
+      },
+      "metrics": {
+        "score": 4.493675499999999,
+        "runs": [
+          {
+            "score": 0.492771,
+            "samples": 75,
+            "valid_samples": 75,
+            "rmse_deg": 0.17777,
+            "tail_rmse_deg": 0.09,
+            "overshoot_deg": 0.0,
+            "response_gain": 0.73837,
+            "tail_rate_rms_deg_s": 0.0,
+            "invalid_ratio": 0.0,
+            "protection_ratio": 0.0,
+            "saturation_ratio": 0.0,
+            "target": 2.0
+          },
+          {
+            "score": 8.49458,
+            "samples": 68,
+            "valid_samples": 65,
+            "rmse_deg": 2.57017,
+            "tail_rmse_deg": 1.62663,
+            "overshoot_deg": 0.0,
+            "response_gain": 0.60904,
+            "tail_rate_rms_deg_s": 0.87969,
+            "invalid_ratio": 0.04412,
+            "protection_ratio": 0.0,
+            "saturation_ratio": 0.0,
+            "target": -2.0
+          }
+        ]
+      },
+      "score": 4.493675499999999
+    },
+    {
+      "changed": "inner_kp",
+      "config": {
+        "inner_kp": 1.625,
+        "inner_kd": 0.0,
+        "speed_limit": 24.0,
+        "slew": 150.0
+      },
+      "metrics": {
+        "score": 7.890554,
+        "runs": [
+          {
+            "score": 6.875884,
+            "samples": 71,
+            "valid_samples": 68,
+            "rmse_deg": 1.87519,
+            "tail_rmse_deg": 1.34439,
+            "overshoot_deg": 0.0,
+            "response_gain": 0.4871,
+            "tail_rate_rms_deg_s": 0.45634,
+            "invalid_ratio": 0.04225,
+            "protection_ratio": 0.0,
+            "saturation_ratio": 0.0,
+            "target": 2.0
+          },
+          {
+            "score": 8.905224,
+            "samples": 73,
+            "valid_samples": 69,
+            "rmse_deg": 2.16553,
+            "tail_rmse_deg": 1.7985,
+            "overshoot_deg": 0.0,
+            "response_gain": 0.37272,
+            "tail_rate_rms_deg_s": 0.9441,
+            "invalid_ratio": 0.05479,
+            "protection_ratio": 0.0,
+            "saturation_ratio": 0.0,
+            "target": -2.0
+          }
+        ]
+      },
+      "score": 7.890554
+    },
+    {
+      "changed": "inner_kp",
+      "config": {
+        "inner_kp": 3.875,
+        "inner_kd": 0.0,
+        "speed_limit": 24.0,
+        "slew": 150.0
+      },
+      "metrics": {
+        "score": 5.151039,
+        "runs": [
+          {
+            "score": 3.458009,
+            "samples": 67,
+            "valid_samples": 63,
+            "rmse_deg": 1.22863,
+            "tail_rmse_deg": 0.5153,
+            "overshoot_deg": 0.0,
+            "response_gain": 0.78926,
+            "tail_rate_rms_deg_s": 0.43874,
+            "invalid_ratio": 0.0597,
+            "protection_ratio": 0.0,
+            "saturation_ratio": 0.0,
+            "target": 2.0
+          },
+          {
+            "score": 6.844069,
+            "samples": 56,
+            "valid_samples": 53,
+            "rmse_deg": 2.23647,
+            "tail_rmse_deg": 1.22336,
+            "overshoot_deg": 0.0,
+            "response_gain": 0.68905,
+            "tail_rate_rms_deg_s": 1.10082,
+            "invalid_ratio": 0.05357,
+            "protection_ratio": 0.0,
+            "saturation_ratio": 0.0,
+            "target": -2.0
+          }
+        ]
+      },
+      "score": 5.151039
+    },
+    {
+      "changed": "inner_kd",
+      "config": {
+        "inner_kp": 2.5,
+        "inner_kd": 0.1,
+        "speed_limit": 24.0,
+        "slew": 150.0
+      },
+      "metrics": {
+        "score": 6.201335,
+        "runs": [
+          {
+            "score": 6.138113,
+            "samples": 70,
+            "valid_samples": 67,
+            "rmse_deg": 1.92807,
+            "tail_rmse_deg": 1.13244,
+            "overshoot_deg": 0.0,
+            "response_gain": 0.65362,
+            "tail_rate_rms_deg_s": 0.68436,
+            "invalid_ratio": 0.04286,
+            "protection_ratio": 0.0,
+            "saturation_ratio": 0.0,
+            "target": 2.0
+          },
+          {
+            "score": 6.264557,
+            "samples": 76,
+            "valid_samples": 73,
+            "rmse_deg": 1.97207,
+            "tail_rmse_deg": 1.16205,
+            "overshoot_deg": 0.0,
+            "response_gain": 0.6505,
+            "tail_rate_rms_deg_s": 0.6318,
+            "invalid_ratio": 0.03947,
+            "protection_ratio": 0.0,
+            "saturation_ratio": 0.0,
+            "target": -2.0
+          }
+        ]
+      },
+      "score": 6.201335
+    },
+    {
+      "changed": "speed_limit",
+      "config": {
+        "inner_kp": 2.5,
+        "inner_kd": 0.0,
+        "speed_limit": 16.8,
+        "slew": 150.0
+      },
+      "metrics": {
+        "score": 5.580894000000001,
+        "runs": [
+          {
+            "score": 5.053865,
+            "samples": 76,
+            "valid_samples": 75,
+            "rmse_deg": 1.78841,
+            "tail_rmse_deg": 0.92771,
+            "overshoot_deg": 0.0,
+            "response_gain": 0.70796,
+            "tail_rate_rms_deg_s": 0.63562,
+            "invalid_ratio": 0.01316,
+            "protection_ratio": 0.0,
+            "saturation_ratio": 0.0,
+            "target": 2.0
+          },
+          {
+            "score": 6.107923,
+            "samples": 75,
+            "valid_samples": 74,
+            "rmse_deg": 2.02586,
+            "tail_rmse_deg": 1.16159,
+            "overshoot_deg": 0.0,
+            "response_gain": 0.66522,
+            "tail_rate_rms_deg_s": 0.6442,
+            "invalid_ratio": 0.01333,
+            "protection_ratio": 0.0,
+            "saturation_ratio": 0.0,
+            "target": -2.0
+          }
+        ]
+      },
+      "score": 5.580894000000001
+    },
+    {
+      "changed": "speed_limit",
+      "config": {
+        "inner_kp": 2.5,
+        "inner_kd": 0.0,
+        "speed_limit": 34.8,
+        "slew": 150.0
+      },
+      "metrics": {
+        "score": 5.773069,
+        "runs": [
+          {
+            "score": 5.483236,
+            "samples": 72,
+            "valid_samples": 71,
+            "rmse_deg": 1.86598,
+            "tail_rmse_deg": 1.03043,
+            "overshoot_deg": 0.0,
+            "response_gain": 0.67884,
+            "tail_rate_rms_deg_s": 0.59841,
+            "invalid_ratio": 0.01389,
+            "protection_ratio": 0.0,
+            "saturation_ratio": 0.0,
+            "target": 2.0
+          },
+          {
+            "score": 6.062902,
+            "samples": 76,
+            "valid_samples": 75,
+            "rmse_deg": 1.98589,
+            "tail_rmse_deg": 1.15102,
+            "overshoot_deg": 0.0,
+            "response_gain": 0.66396,
+            "tail_rate_rms_deg_s": 1.07417,
+            "invalid_ratio": 0.01316,
+            "protection_ratio": 0.0,
+            "saturation_ratio": 0.0,
+            "target": -2.0
+          }
+        ]
+      },
+      "score": 5.773069
+    },
+    {
+      "changed": "slew",
+      "config": {
+        "inner_kp": 2.5,
+        "inner_kd": 0.0,
+        "speed_limit": 24.0,
+        "slew": 75.0
+      },
+      "metrics": {
+        "score": 6.1085885,
+        "runs": [
+          {
+            "score": 6.273292,
+            "samples": 67,
+            "valid_samples": 62,
+            "rmse_deg": 1.85652,
+            "tail_rmse_deg": 1.12002,
+            "overshoot_deg": 0.0,
+            "response_gain": 0.64265,
+            "tail_rate_rms_deg_s": 0.71954,
+            "invalid_ratio": 0.07463,
+            "protection_ratio": 0.0,
+            "saturation_ratio": 0.0,
+            "target": 2.0
+          },
+          {
+            "score": 5.943885,
+            "samples": 76,
+            "valid_samples": 75,
+            "rmse_deg": 1.96154,
+            "tail_rmse_deg": 1.13277,
+            "overshoot_deg": 0.0,
+            "response_gain": 0.66282,
+            "tail_rate_rms_deg_s": 0.65064,
+            "invalid_ratio": 0.01316,
+            "protection_ratio": 0.0,
+            "saturation_ratio": 0.0,
+            "target": -2.0
+          }
+        ]
+      },
+      "score": 6.1085885
+    },
+    {
+      "changed": "slew",
+      "config": {
+        "inner_kp": 2.5,
+        "inner_kd": 0.0,
+        "speed_limit": 24.0,
+        "slew": 300.0
+      },
+      "metrics": {
+        "score": 5.4032405,
+        "runs": [
+          {
+            "score": 5.169918,
+            "samples": 76,
+            "valid_samples": 75,
+            "rmse_deg": 1.81097,
+            "tail_rmse_deg": 0.95343,
+            "overshoot_deg": 0.0,
+            "response_gain": 0.70093,
+            "tail_rate_rms_deg_s": 0.57633,
+            "invalid_ratio": 0.01316,
+            "protection_ratio": 0.0,
+            "saturation_ratio": 0.0,
+            "target": 2.0
+          },
+          {
+            "score": 5.636563,
+            "samples": 76,
+            "valid_samples": 76,
+            "rmse_deg": 1.97824,
+            "tail_rmse_deg": 1.07526,
+            "overshoot_deg": 0.0,
+            "response_gain": 0.6942,
+            "tail_rate_rms_deg_s": 0.61617,
+            "invalid_ratio": 0.0,
+            "protection_ratio": 0.0,
+            "saturation_ratio": 0.0,
+            "target": -2.0
+          }
+        ]
+      },
+      "score": 5.4032405
+    }
+  ],
+  "stage": "inner",
+  "initial_config": {
+    "outer_kp": 0.026044,
+    "outer_kd": 0.0046,
+    "angle_limit": 10.5,
+    "inner_kp": 2.5,
+    "inner_kd": 0.0,
+    "speed_limit": 24.0,
+    "slew": 150.0,
+    "deadband": 0.3,
+    "min_speed": 0.5
+  },
+  "final_ack": {
+    "v": 1,
+    "type": "pid_ack",
+    "session": "01603ed3",
+    "request_id": "pid-1785513550164545200",
+    "action": "set",
+    "ok": true,
+    "config": {
+      "outer_kp": 0.026044,
+      "outer_kd": 0.0046,
+      "angle_limit": 10.5,
+      "inner_kp": 2.5,
+      "inner_kd": 0.0,
+      "speed_limit": 24.0,
+      "slew": 150.0,
+      "deadband": 0.3,
+      "min_speed": 0.5
+    },
+    "mode": 3,
+    "test_target": 0.0,
+    "remaining_ms": 0,
+    "error": "",
+    "_host_epoch_ns": 1785513550349850800,
+    "_host_monotonic_ns": 54693005234300,
+    "_source_ip": "10.16.6.1"
+  },
+  "duration_s": 2.5,
+  "targets": [
+    2.0,
+    -2.0
+  ],
+  "completed_epoch_ns": 1785513550476038100
+}

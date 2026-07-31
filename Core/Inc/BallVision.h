@@ -23,7 +23,9 @@ extern "C" {
  *     error_x10,p_x100,i_x100,d_x100,motor_command,motor_status\n
  * P/I/D use rod-angle units in Questions 2/4 and motor-speed units in
  * Question 5. motor_command is the signed speed request in Questions 2/5
- * and the absolute position target in Question 4.
+ * and the absolute position target in Question 4. For Question 5,
+ * position_x10 remains the measured camera error while error_x10 is the
+ * delay-compensated predicted error used by the controller.
  *
  * Missing sequence numbers mean feedback was dropped because USART6 was
  * still transmitting. Motor control is never delayed to wait for logging.

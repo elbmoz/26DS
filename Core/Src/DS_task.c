@@ -676,7 +676,8 @@ static void DS_Task_FinishQuestion5(uint32_t now)
 static void DS_Task_StartQuestion5(void)
 {
     ds_task.state = DS_TASK_RUNNING_Q5;
-    ds_task.question5_oled_state = DS_TASK_Q2_OLED_UPDATING;
+    /* Default to control-first mode; PB6 can re-enable live OLED data. */
+    ds_task.question5_oled_state = DS_TASK_Q2_OLED_PAUSED;
     ds_task.start_ms = HAL_GetTick();
     ds_task.elapsed_ms = 0U;
     ds_task_last_display_ms = ds_task.start_ms -
@@ -685,7 +686,7 @@ static void DS_Task_StartQuestion5(void)
     Task5SpeedControl_Start();
     /* Question 5 uses the same MaixCAM error stream and c2 command. */
     BallVision_StartStream();
-    DS_Task_ShowQuestion5();
+    DS_Task_ShowQuestion5OledPaused();
 }
 
 static void DS_Task_ToggleQuestion5Oled(uint32_t now)

@@ -73,14 +73,16 @@ Preprocessor defines: `USE_HAL_DRIVER;STM32F407xx`
     Question 4 always captures its own horizontal position on entry and never
     reads or writes `balance_control_config` or
     `balance_control_state`.
-11. `Task5SpeedControl.c/.h` — Fully isolated Question 5 controller. It applies
-    a single PID directly to the MaixCAM center error and sends the result as a
-    signed `0xF6` motor-speed command. A separately limited velocity
-    feedforward term uses MaixCAM's ball-velocity measurement to reduce response
-    lag. It has no linkage mapping and no motor position loop. The current
-    defaults are `Kp=0.012`, `Ki=0`, `Kd=0.01`, velocity-feedforward gain
-    `0.01`, feedforward limit `3`, speed limit `10`, and an inclusive
-    `+/-20 px` stop deadband.
+11. `Task5SpeedControl.c/.h` — Fully isolated Question 5 controller. It fuses
+    MaixCAM velocity with frame-to-frame position velocity, predicts the error
+    forward by the configured sensing delay plus current frame age, and runs a
+    100 Hz PID/feedforward loop between camera frames. A `2`-unit static
+    feedforward overcomes command quantization at motion start; a 5 px
+    hysteresis prevents deadband chatter. It sends signed `0xF6` speed commands
+    and has no linkage mapping or motor-position loop. Current tuning is
+    `Kp=0.008`, `Ki=0`, `Kd=0`, velocity-feedforward gain `0.01`, feedforward
+    limit `20`, speed limit `8`, 60 ms sensor-delay compensation, and a 60 px
+    prediction-offset limit.
 12. `MotorPositionMonitor.c/.h` — Shared non-blocking `0x36` position reader
     for Questions 2, 4 and 9. Each task selects its own period; Question 9 uses
     20 ms for 50 Hz calibration sampling without changing Question 2. It also
@@ -98,8 +100,9 @@ Preprocessor defines: `USE_HAL_DRIVER;STM32F407xx`
     toggle its periodic OLED/I2C output without stopping control, Question 3
     runs the fixed timed motor sequence, and Question 4 runs its independent
     position-mode center-return controller with the same OLED toggle. Question
-    5 runs its isolated direct speed-PID controller and reuses the same OLED
-    data/toggle pattern. Question 9 displays motor 3 position
+    5 runs its isolated predictive speed controller. It starts with periodic
+    OLED refresh paused to protect the 100 Hz loop; PB6 re-enables the reused
+    live data page. Question 9 displays motor 3 position
     while moving between independently adjustable
     upper/lower endpoints, without starting either controller or changing
     Question 2 settings.
@@ -144,15 +147,17 @@ capture session must never be installed as a cross-power-cycle zero.
 
 ## Question 5 Isolation Invariant
 
-Question 5 is a direct single-loop PID plus velocity-feedforward speed
-controller. Keep its gains, feedforward limits, integrator, derivative history,
-vision state and motor-command state in
+Question 5 is a predictive single-loop PID/feedforward speed controller. Keep
+its observer, delay compensation, gains, feedforward limits, integrator,
+deadband state, vision state and motor-command state in
 `Task5SpeedControl`; it must not read or write `balance_control_config`,
 `balance_control_state`, `task4_position_control_config`, or
 `task4_position_control_state`. It reuses the `c2` MaixCAM stream and OLED data
-layout, but must not start `MotorPositionMonitor` or apply any linkage,
-angle, pulse, or position mapping. Vision loss and errors inside the inclusive
-`+/-20 px` deadband must command a stop.
+layout, but must not start `MotorPositionMonitor` or apply any linkage, angle,
+pulse, or position mapping. Vision loss must command a stop. Deadband uses the
+predicted error: it starts motion outside 20 px and, once active, stops inside
+15 px. Periodic OLED refresh is paused by default and remains manually
+available through PB6.
 
 ## Question 9 Data-Collection Invariant
 

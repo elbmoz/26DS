@@ -10,8 +10,8 @@ extern "C" {
 /*
  * Question 5 isolated single-loop controller:
  *
- *   MaixCAM center error -> PID -------------------+
- *   MaixCAM ball velocity -> limited feedforward --+-> motor speed
+ *   MaixCAM error/velocity -> fused state prediction -> PID
+ *   predicted error direction -> static feedforward --------+-> speed
  *
  * It does not use motor-position feedback, linkage mappings, or any
  * BalanceControl/Task4PositionControl configuration or state.
@@ -24,8 +24,19 @@ typedef struct
     float integral_limit;
     float velocity_feedforward_gain;
     float feedforward_limit;
+    float static_feedforward_speed;
     float speed_limit;
     float error_deadband_px;
+    float deadband_hysteresis_px;
+
+    /* Low-latency observer and delay-compensating prediction. */
+    float velocity_estimator_alpha;
+    float camera_velocity_weight;
+    float velocity_estimate_limit_px_s;
+    float sensor_delay_ms;
+    float prediction_time_limit_ms;
+    float prediction_offset_limit_px;
+
     uint32_t control_period_ms;
     uint8_t motor_slope;
 } Task5SpeedControlConfig;
@@ -38,15 +49,22 @@ typedef struct
 
     volatile float camera_error;
     volatile float ball_velocity;
+    volatile float estimated_velocity;
+    volatile float predicted_error;
+    volatile float prediction_offset;
+    volatile uint32_t vision_age_ms;
     volatile float p_term;
     volatile float i_term;
     volatile float d_term;
+    volatile float velocity_feedforward_term;
+    volatile float static_feedforward_term;
     volatile float feedforward_term;
     volatile float integral;
     volatile float output;
     volatile int32_t motor_command;
 
     volatile uint32_t update_count;
+    volatile uint32_t measurement_update_count;
     volatile HAL_StatusTypeDef last_motor_status;
 } Task5SpeedControlState;
 

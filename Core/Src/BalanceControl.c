@@ -35,7 +35,7 @@ BalanceControlConfig balance_control_config = {
     .outer_kp_deg_per_px = 0.026044f,       /* 位置 P：误差每 1 px 产生的角度。 */
     /* 首轮为 0；P/D 调稳后可从参考候选 0.03297 开始小步增加。 */
     .outer_ki_deg_per_px_s = 0.0f,      /* 位置 I：用于消除固定静差。 */
-    .outer_kd_deg_per_px_s = 0.0056f,     /* 速度 D：使用 -Kd*球速抑制冲过中心。 */
+    .outer_kd_deg_per_px_s = 0.0046f,     /* 速度 D：使用 -Kd*球速抑制冲过中心。 */
     .outer_integral_limit_px_s = 109.2f, /* 限制积分累积，防止积分饱和。 */
     /*
      * 当前值允许 ±5.5°目标管道角；最终不得超过拟合得到的
@@ -52,9 +52,9 @@ BalanceControlConfig balance_control_config = {
     .soft_angle_limit_scale = 0.65f,    /* 柔化区把目标角限幅乘 0.65。 */
     /* 首轮为 0；外环稳定后可从参考候选 0.10989 以下逐步增加。 */
     .soft_ki_deg_per_px_s = 0.0f,       /* 柔化区单独使用的 Ki，不是基础 Ki 倍率。 */
-    .fine_fast_kp_scale = 0.25f,        /* 精细区但球速较快时的 Kp 倍率。 */
-    .fine_fast_ki_scale = 0.50f,        /* 精细区高速时把 soft Ki 再乘 0.50。 */
-    .fine_fast_angle_limit_scale = 0.40f, /* 精细区高速时的限幅倍率。 */
+    .fine_fast_kp_scale = 1.0f,        /* 精细区但球速较快时的 Kp 倍率。 */
+    .fine_fast_ki_scale = 1.0,        /* 精细区高速时把 soft Ki 再乘 0.50。 */
+    .fine_fast_angle_limit_scale = 1.0f, /* 精细区高速时的限幅倍率。 */
     .hold_integral_decay = 0.70f,       /* 回水平保持时每帧保留 70% 积分。 */
     .fine_hold_inner_kp_scale = 0.60f,  /* 回水平保持时把角度内环 Kp 乘 0.60。 */
 
@@ -99,9 +99,9 @@ BalanceControlConfig balance_control_config = {
      * - motor_min_speed：克服静摩擦的最小速度；
      * - motor_speed_deadband：目标附近的停车死区。
      */
-    .angle_kp_speed_per_deg = 24.0f,     /* 角度误差每 1°产生的速度命令。 */
+    .angle_kp_speed_per_deg = 2.5f,     /* 角度误差每 1°产生的速度命令。 */
     .angle_kd_speed_per_deg_s = 0.0f,   /* 在线阶跃测试辨识角速度阻尼。 */
-    .motor_speed_limit = 10.0f,         /* 最终速度命令绝对值不得超过 30。 */
+    .motor_speed_limit = 24.0f,         /* 最终速度命令绝对值不得超过 30。 */
     .motor_speed_deadband = 0.3f,       /* 连续速度落入该死区时命令为 0。 */
     .motor_min_speed = 0.5f,            /* 最小非零命令 1；缩放成功时为 0.1 RPM。 */
     .motor_slew_per_update = 150.0f,      /* 每 20 ms 最多改变 2 个速度命令单位。 */
