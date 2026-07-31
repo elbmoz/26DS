@@ -340,13 +340,14 @@ def make_tracking_packet(
     detect_ms,
     state,
     detection,
+    q9=None,
 ):
     valid = bool(state["valid"])
     axis_start = detection.get("axis_start", (None, None))
     axis_end = detection.get("axis_end", (None, None))
     full_roi = detection.get("full_roi", detection["search_roi"])
     pipe_state = detection.get("pipe", {})
-    return {
+    packet = {
         "v": PROTOCOL_VERSION,
         "type": "tracking",
         "session": str(session_id),
@@ -431,6 +432,30 @@ def make_tracking_packet(
         "pipe_width": _rounded(pipe_state.get("width")),
         "pipe_score": _rounded(pipe_state.get("score")),
     }
+    if q9:
+        q9_fields = (
+            "seq",
+            "seq_gap",
+            "mcu_ms",
+            "motor_position",
+            "angle_x_x10",
+            "angle_y_x10",
+            "angle_z_x10",
+            "angle_x_deg",
+            "angle_y_deg",
+            "angle_z_deg",
+            "imu_valid",
+            "position_valid",
+            "position_status",
+            "position_updates",
+            "move_direction",
+            "move_status",
+        )
+        packet["q9"] = {
+            name: q9[name]
+            for name in q9_fields
+        }
+    return packet
 
 
 def make_stm32_feedback_packet(

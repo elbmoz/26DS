@@ -249,6 +249,7 @@ def main():
                     detect_ms,
                     state,
                     detection,
+                    q9=stm32_link.get_latest_q9(),
                 )
                 link.send(packet)
                 sequence += 1
@@ -312,7 +313,12 @@ def main():
                 and now_ms - last_preview_ms >= preview_period_ms
             ):
                 draw_overlay(
-                    img, detection, state, fps_value, measured_ratio
+                    img,
+                    detection,
+                    state,
+                    fps_value,
+                    measured_ratio,
+                    stm32_link.get_latest_q9(),
                 )
                 screen.show(img)
                 last_preview_ms = now_ms

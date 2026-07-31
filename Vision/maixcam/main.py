@@ -10,7 +10,7 @@ from ball_detector import LabBallDetector
 from ball_tracker_core import BallTracker
 from loop_timing import periodic_due
 from pipe_pose import AnchoredPipePoseDetector, GreenPipePoseDetector
-from stm32_link import Stm32Link
+from stm32_link import Stm32Link, q9_overlay_lines
 from vision_v2 import BallVisionV2, VisionV2Config
 from stream_protocol import validate_parameters
 
@@ -390,7 +390,14 @@ def process_frame(img, now_ms, frame_id, detector, tracker, pipe_detector):
     return detection, state
 
 
-def draw_overlay(img, detection, state, fps_value, measured_ratio):
+def draw_overlay(
+    img,
+    detection,
+    state,
+    fps_value,
+    measured_ratio,
+    q9=None,
+):
     roi_x, roi_y, roi_w, roi_h = detection.get(
         "full_roi", tuple(cfg.ROI)
     )
@@ -520,6 +527,17 @@ def draw_overlay(img, detection, state, fps_value, measured_ratio):
         image.COLOR_WHITE,
         0.9,
     )
+    q9_lines = q9_overlay_lines(q9)
+    if q9_lines:
+        q9_y = max(0, cfg.CAMERA_HEIGHT - 68)
+        for index, line in enumerate(q9_lines):
+            img.draw_string(
+                8,
+                q9_y + index * 15,
+                line,
+                image.COLOR_YELLOW,
+                0.6,
+            )
 
 
 def main():
@@ -632,7 +650,12 @@ def main():
             and now_ms - last_preview_ms >= preview_period_ms
         ):
             draw_overlay(
-                img, detection, state, fps_value, measured_ratio
+                img,
+                detection,
+                state,
+                fps_value,
+                measured_ratio,
+                stm32_link.get_latest_q9(),
             )
             screen.show(img)
             last_preview_ms = now_ms

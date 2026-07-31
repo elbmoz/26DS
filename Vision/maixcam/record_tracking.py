@@ -252,7 +252,14 @@ def main():
 
             if screen is not None and now_ms - last_preview_ms >= preview_period_ms:
                 measured_ratio = float(stats.measured) / max(1, stats.frames)
-                draw_overlay(img, detection, state, fps_value, measured_ratio)
+                draw_overlay(
+                    img,
+                    detection,
+                    state,
+                    fps_value,
+                    measured_ratio,
+                    stm32_link.get_latest_q9(),
+                )
                 img.draw_string(
                     cfg.CAMERA_WIDTH - 70,
                     8,

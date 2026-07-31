@@ -195,6 +195,7 @@ def _tracking_summary(tracking):
         "axis_y0": tracking.get("axis_y0"),
         "axis_x1": tracking.get("axis_x1"),
         "axis_y1": tracking.get("axis_y1"),
+        "q9": tracking.get("q9"),
     }
 
 

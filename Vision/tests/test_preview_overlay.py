@@ -8,10 +8,39 @@ import numpy
 WINDOWS_DIR = Path(__file__).resolve().parents[1] / "windows"
 sys.path.insert(0, str(WINDOWS_DIR))
 
-from preview_overlay import STATUS_BAR_HEIGHT, build_preview_frame
+from preview_overlay import (
+    STATUS_BAR_HEIGHT,
+    _q9_overlay_lines,
+    build_preview_frame,
+)
 
 
 class PreviewOverlayTests(unittest.TestCase):
+    def test_q9_overlay_lines_show_position_angles_and_status(self):
+        lines = _q9_overlay_lines(
+            {
+                "motor_position": 4897,
+                "angle_x_deg": -12.3,
+                "angle_y_deg": 4.8,
+                "angle_z_deg": 90.6,
+                "imu_valid": 1,
+                "position_valid": 0,
+                "position_status": 2,
+                "position_updates": 84,
+                "move_direction": -1,
+                "move_status": 3,
+            }
+        )
+        self.assertEqual(
+            lines,
+            (
+                "Q9 P:4897",
+                "X:-12.3 Y:4.8 Z:90.6",
+                "IMU:V POS:X RX:2 N:84",
+                "DIR:-1 MOVE:3",
+            ),
+        )
+
     def test_status_footer_keeps_the_complete_video_visible(self):
         frame = numpy.full((24, 32, 3), (12, 34, 56), dtype=numpy.uint8)
 

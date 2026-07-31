@@ -132,6 +132,65 @@ class StreamProtocolTests(unittest.TestCase):
         self.assertEqual(decoded["roi_w"], 470)
         self.assertEqual(len(decoded["roi_quad"]), 4)
 
+    def test_tracking_packet_can_forward_latest_q9_snapshot(self):
+        state = {
+            "valid": False,
+            "measured": False,
+            "coasting": False,
+            "x": 0,
+            "y": 0,
+            "radius": 0,
+            "position": 0,
+            "position_px": 0,
+            "error_px": 0,
+            "lateral_px": 0,
+            "velocity_px_s": 0,
+            "quality": 0,
+            "hits": 0,
+            "misses": 0,
+        }
+        detection = {
+            "raw_count": 0,
+            "candidates": [],
+            "search_roi": (0, 0, 10, 10),
+            "fell_back": False,
+            "pipe": {},
+        }
+        q9 = {
+            "seq": 17,
+            "seq_gap": 0,
+            "mcu_ms": 25340,
+            "motor_position": 4897,
+            "angle_x_x10": -123,
+            "angle_y_x10": 48,
+            "angle_z_x10": 906,
+            "angle_x_deg": -12.3,
+            "angle_y_deg": 4.8,
+            "angle_z_deg": 90.6,
+            "imu_valid": 1,
+            "position_valid": 1,
+            "position_status": 0,
+            "position_updates": 84,
+            "move_direction": -1,
+            "move_status": 0,
+        }
+        packet = make_tracking_packet(
+            "session",
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            state,
+            detection,
+            q9=q9,
+        )
+        decoded = decode_packet(encode_packet(packet))
+        self.assertEqual(decoded["q9"]["motor_position"], 4897)
+        self.assertEqual(decoded["q9"]["angle_z_deg"], 90.6)
+        self.assertNotIn("raw_line", decoded["q9"])
+
     def test_stm32_feedback_packet_preserves_mcu_sequence(self):
         feedback = {
             "seq": 17,

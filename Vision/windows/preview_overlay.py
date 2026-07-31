@@ -26,6 +26,59 @@ def _scale_point(point, camera_size, frame_size):
     )
 
 
+def _q9_overlay_lines(q9):
+    if not q9:
+        return ()
+    return (
+        "Q9 P:{}".format(q9["motor_position"]),
+        "X:{:.1f} Y:{:.1f} Z:{:.1f}".format(
+            q9["angle_x_deg"],
+            q9["angle_y_deg"],
+            q9["angle_z_deg"],
+        ),
+        "IMU:{} POS:{} RX:{} N:{}".format(
+            "V" if q9["imu_valid"] else "X",
+            "V" if q9["position_valid"] else "X",
+            q9["position_status"],
+            q9["position_updates"],
+        ),
+        "DIR:{} MOVE:{}".format(
+            q9["move_direction"],
+            q9["move_status"],
+        ),
+    )
+
+
+def _draw_q9_overlay(frame, q9):
+    lines = _q9_overlay_lines(q9)
+    if not lines:
+        return
+    height = frame.shape[0]
+    first_y = max(13, height - 54)
+    for index, line in enumerate(lines):
+        origin = (8, first_y + index * 14)
+        cv2.putText(
+            frame,
+            line,
+            origin,
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.36,
+            (0, 0, 0),
+            3,
+            cv2.LINE_AA,
+        )
+        cv2.putText(
+            frame,
+            line,
+            origin,
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.36,
+            (0, 230, 255),
+            1,
+            cv2.LINE_AA,
+        )
+
+
 def _draw_scene_overlay(frame, tracking, status, synchronized):
     height, width = frame.shape[:2]
     camera_size = _DEFAULT_CAMERA_SIZE
@@ -180,6 +233,7 @@ def _draw_scene_overlay(frame, tracking, status, synchronized):
             )
             if candidate_center:
                 cv2.circle(frame, candidate_center, 3, (255, 200, 0), 1)
+        _draw_q9_overlay(frame, tracking.get("q9"))
 
     if not tracking or not tracking.get("valid") or not synchronized:
         return

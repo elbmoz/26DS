@@ -53,7 +53,24 @@ MOTOR_STATUS_NAMES = (
     "HAL_TIMEOUT",
 )
 
-_MAX_FEEDBACK_LINE_CHARS = 512
+Q9_RAW_FIELDS = (
+    "seq",
+    "mcu_ms",
+    "motor_position",
+    "angle_x_x10",
+    "angle_y_x10",
+    "angle_z_x10",
+    "imu_valid",
+    "position_valid",
+    "position_status",
+    "position_updates",
+    "move_direction",
+    "move_status",
+)
+
+_MAX_RX_LINE_CHARS = 512
+_UINT32_MASK = 0xFFFFFFFF
+_UINT32_HALF_RANGE = 0x80000000
 
 
 def _decode_ascii(data):
@@ -100,6 +117,90 @@ def parse_stm32_feedback_line(line):
         }
     )
     return feedback
+
+
+def _parse_decimal_integer(value):
+    if not value:
+        raise ValueError("empty decimal integer")
+    digits = value
+    if value[0] in ("+", "-"):
+        digits = value[1:]
+    if not digits or not digits.isdigit():
+        raise ValueError("invalid decimal integer")
+    return int(value, 10)
+
+
+def parse_q9_line(line):
+    """Strictly parse one STM32 Question 9 telemetry frame."""
+    if isinstance(line, str):
+        text = line.strip()
+        try:
+            text.encode("ascii")
+        except UnicodeEncodeError:
+            raise ValueError("Q9 frame must be ASCII")
+    else:
+        try:
+            text = bytes(line).decode("ascii").strip()
+        except Exception:
+            raise ValueError("Q9 frame must be ASCII")
+
+    fields = text.split(",")
+    if len(fields) != len(Q9_RAW_FIELDS) + 1:
+        raise ValueError("Q9 field count must be 13")
+    if fields[0] != "Q9":
+        raise ValueError("Q9 frame must start with Q9")
+
+    frame = {}
+    for name, value in zip(Q9_RAW_FIELDS, fields[1:]):
+        frame[name] = _parse_decimal_integer(value)
+
+    sequence = frame["seq"]
+    if sequence < 0 or sequence > _UINT32_MASK:
+        raise ValueError("Q9 seq must be an unsigned 32-bit integer")
+    if frame["imu_valid"] not in (0, 1):
+        raise ValueError("Q9 imu_valid must be 0 or 1")
+    if frame["position_valid"] not in (0, 1):
+        raise ValueError("Q9 position_valid must be 0 or 1")
+    if frame["position_status"] not in (0, 1, 2, 3):
+        raise ValueError("Q9 position_status must be in range 0..3")
+    if frame["move_direction"] not in (-1, 0, 1):
+        raise ValueError("Q9 move_direction must be -1, 0 or 1")
+    if frame["move_status"] not in (0, 1, 2, 3):
+        raise ValueError("Q9 move_status must be in range 0..3")
+
+    frame.update(
+        {
+            "angle_x_deg": frame["angle_x_x10"] / 10.0,
+            "angle_y_deg": frame["angle_y_x10"] / 10.0,
+            "angle_z_deg": frame["angle_z_x10"] / 10.0,
+            "raw_line": text,
+        }
+    )
+    return frame
+
+
+def q9_overlay_lines(q9):
+    """Return the four compact preview lines for a parsed Q9 frame."""
+    if not q9:
+        return ()
+    return (
+        "Q9 P:{}".format(q9["motor_position"]),
+        "X:{:.1f} Y:{:.1f} Z:{:.1f}".format(
+            q9["angle_x_deg"],
+            q9["angle_y_deg"],
+            q9["angle_z_deg"],
+        ),
+        "IMU:{} POS:{} RX:{} N:{}".format(
+            "V" if q9["imu_valid"] else "X",
+            "V" if q9["position_valid"] else "X",
+            q9["position_status"],
+            q9["position_updates"],
+        ),
+        "DIR:{} MOVE:{}".format(
+            q9["move_direction"],
+            q9["move_status"],
+        ),
+    )
 
 
 def feedback_csv_header():
@@ -156,10 +257,16 @@ class Stm32Link:
         self.output_scale = float(output_scale)
         self.streaming = False
         self.command_tail = ""
+        self.rx_buffer = ""
+        self.rx_discarding_line = False
+        self.rx_line_invalid = False
+        # Kept as a compatibility alias for older diagnostics.
         self.feedback_tail = ""
         self.feedback_queue = []
         self.feedback_queue_size = max(1, int(feedback_queue_size))
         self.last_feedback_seq = None
+        self.latest_q9 = None
+        self.last_q9_seq = None
         self.start_count = 0
         self.stop_count = 0
         self.rx_error_count = 0
@@ -169,6 +276,9 @@ class Stm32Link:
         self.feedback_error_count = 0
         self.feedback_gap_count = 0
         self.feedback_queue_drop_count = 0
+        self.q9_frame_count = 0
+        self.q9_parse_error_count = 0
+        self.q9_sequence_gap_count = 0
 
     def _consume_commands(self, text):
         for character in text.lower():
@@ -201,33 +311,122 @@ class Stm32Link:
         self.feedback_queue.append(feedback)
         self.feedback_count += 1
 
-    def _consume_feedback(self, text):
-        for character in text:
-            self.feedback_tail += character
-            if character not in "\r\n":
-                if len(self.feedback_tail) > _MAX_FEEDBACK_LINE_CHARS:
-                    marker = self.feedback_tail.rfind("F,")
-                    if marker >= 0:
-                        self.feedback_tail = self.feedback_tail[marker:]
-                    else:
-                        self.feedback_tail = self.feedback_tail[
-                            -_MAX_FEEDBACK_LINE_CHARS:
-                        ]
-                continue
+    def _queue_q9(self, frame):
+        sequence = int(frame["seq"]) & _UINT32_MASK
+        gap = 0
+        if self.last_q9_seq is None:
+            self.last_q9_seq = sequence
+        else:
+            delta = (sequence - self.last_q9_seq) & _UINT32_MASK
+            if 0 < delta < _UINT32_HALF_RANGE:
+                if delta > 1:
+                    gap = delta - 1
+                    self.q9_sequence_gap_count += gap
+                self.last_q9_seq = sequence
+            # A duplicate or an older/out-of-order frame is still valid data,
+            # but must not move the sequence reference backwards.
+        frame["seq_gap"] = gap
+        self.latest_q9 = frame
+        self.q9_frame_count += 1
 
-            line = self.feedback_tail.strip()
-            self.feedback_tail = ""
-            # Prefer the newest frame marker so one damaged/missing newline
-            # cannot make the following complete feedback frame undecodable.
-            marker = line.rfind("F,")
-            if marker < 0:
-                continue
+    def _count_bad_line(self, line):
+        q9_marker = line.rfind("Q9")
+        feedback_marker = line.rfind("F,")
+        if q9_marker >= feedback_marker and q9_marker >= 0:
+            self.q9_parse_error_count += 1
+        elif feedback_marker >= 0:
+            self.feedback_error_count += 1
+
+    def _consume_line(self, line):
+        text = line.strip()
+        if not text:
+            return
+        if self.rx_line_invalid:
+            self._count_bad_line(text)
+            return
+
+        q9_marker = text.rfind("Q9")
+        feedback_marker = text.rfind("F,")
+        if q9_marker >= feedback_marker and q9_marker >= 0:
             try:
-                feedback = parse_stm32_feedback_line(line[marker:])
+                frame = parse_q9_line(text[q9_marker:])
+            except (TypeError, ValueError):
+                self.q9_parse_error_count += 1
+                return
+            self._queue_q9(frame)
+            return
+        if feedback_marker >= 0:
+            try:
+                feedback = parse_stm32_feedback_line(
+                    text[feedback_marker:]
+                )
             except (TypeError, ValueError):
                 self.feedback_error_count += 1
-                continue
+                return
             self._queue_feedback(feedback)
+
+    def _finish_rx_line(self):
+        if self.rx_discarding_line:
+            self.rx_discarding_line = False
+            self.rx_line_invalid = False
+            self.rx_buffer = ""
+            self.feedback_tail = ""
+            return
+        line = self.rx_buffer
+        self.rx_buffer = ""
+        self.feedback_tail = ""
+        self._consume_line(line)
+        self.rx_line_invalid = False
+
+    def _discard_overlong_line(self):
+        self.rx_error_count += 1
+        self._count_bad_line(self.rx_buffer)
+        self.rx_buffer = ""
+        self.feedback_tail = ""
+        self.rx_line_invalid = False
+        self.rx_discarding_line = True
+
+    def _consume_rx_character(self, character):
+        self._consume_commands(character)
+        if character in "\r\n":
+            self._finish_rx_line()
+            return
+        if self.rx_discarding_line:
+            return
+        if len(self.rx_buffer) >= _MAX_RX_LINE_CHARS:
+            self._discard_overlong_line()
+            return
+        self.rx_buffer += character
+        self.feedback_tail = self.rx_buffer
+
+    def _consume_rx_data(self, data):
+        if data is None:
+            return
+        if isinstance(data, str):
+            characters = data
+        else:
+            try:
+                characters = bytes(data)
+            except Exception:
+                self.rx_error_count += 1
+                return
+
+        for value in characters:
+            if isinstance(value, int):
+                if value > 0x7F:
+                    self.rx_error_count += 1
+                    self.rx_line_invalid = True
+                    self.command_tail = ""
+                    continue
+                character = chr(value)
+            else:
+                if ord(value) > 0x7F:
+                    self.rx_error_count += 1
+                    self.rx_line_invalid = True
+                    self.command_tail = ""
+                    continue
+                character = value
+            self._consume_rx_character(character)
 
     def poll_commands(self):
         """Consume currently buffered commands and feedback without blocking."""
@@ -240,11 +439,15 @@ class Stm32Link:
             self.rx_error_count += 1
             return self.streaming
 
-        text = _decode_ascii(data)
-        self._consume_commands(text)
-        self._consume_feedback(text)
+        self._consume_rx_data(data)
 
         return self.streaming
+
+    def get_latest_q9(self):
+        """Return an isolated copy of the latest valid Q9 frame."""
+        if self.latest_q9 is None:
+            return None
+        return dict(self.latest_q9)
 
     def drain_feedback(self, max_items=None):
         """Return queued feedback in receive order and remove it from the queue."""

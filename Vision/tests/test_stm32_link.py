@@ -12,6 +12,8 @@ from stm32_link import (
     feedback_csv_row,
     format_stm32_line,
     parse_stm32_feedback_line,
+    parse_q9_line,
+    q9_overlay_lines,
 )
 
 
@@ -31,6 +33,8 @@ class FakeSerial:
 
 
 class Stm32LinkTests(unittest.TestCase):
+    Q9_LINE = "Q9,17,25340,4897,-123,48,906,1,1,0,84,-1,0"
+
     def test_frame_contains_position_error_and_axis_velocity(self):
         line = format_stm32_line(
             {
@@ -126,6 +130,161 @@ class Stm32LinkTests(unittest.TestCase):
         self.assertIn("position_px", header)
         self.assertIn("F,1,20,3,4", row)
         self.assertTrue(row.startswith("99,1,0,20,3,4,"))
+
+    def test_q9_parser_exposes_raw_and_scaled_angles(self):
+        frame = parse_q9_line(self.Q9_LINE)
+        self.assertEqual(frame["seq"], 17)
+        self.assertEqual(frame["mcu_ms"], 25340)
+        self.assertEqual(frame["motor_position"], 4897)
+        self.assertEqual(frame["angle_x_x10"], -123)
+        self.assertEqual(frame["angle_y_x10"], 48)
+        self.assertEqual(frame["angle_z_x10"], 906)
+        self.assertEqual(frame["angle_x_deg"], -12.3)
+        self.assertEqual(frame["angle_y_deg"], 4.8)
+        self.assertEqual(frame["angle_z_deg"], 90.6)
+        self.assertEqual(frame["move_direction"], -1)
+
+    def test_q9_parser_strictly_validates_fields(self):
+        fields = self.Q9_LINE.split(",")
+        invalid_changes = (
+            (0, "Q8"),
+            (1, "1.0"),
+            (7, "2"),
+            (8, "-1"),
+            (9, "4"),
+            (11, "2"),
+            (12, "-1"),
+        )
+        for index, value in invalid_changes:
+            changed = list(fields)
+            changed[index] = value
+            with self.subTest(index=index, value=value):
+                with self.assertRaises(ValueError):
+                    parse_q9_line(",".join(changed))
+
+        with self.assertRaises(ValueError):
+            parse_q9_line(",".join(fields[:-1]))
+        with self.assertRaises(ValueError):
+            parse_q9_line(self.Q9_LINE + ",0")
+        with self.assertRaises(ValueError):
+            parse_q9_line("x" + self.Q9_LINE)
+        with self.assertRaises(ValueError):
+            parse_q9_line(self.Q9_LINE.encode("ascii") + b"\xff")
+
+    def test_q9_split_join_and_commands_share_one_uart_stream(self):
+        serial = FakeSerial()
+        serial.rx_chunks.extend(
+            [
+                b"c",
+                b"2Q9,17,25340,4897,-123,48,",
+                b"906,1,1,0,84,-1,0\r",
+                b"\nQ9,18,25540,4901,-120,50,900,1,1,0,85,1,0\nok",
+            ]
+        )
+        link = Stm32Link(serial)
+        for _ in range(4):
+            link.poll_commands()
+
+        self.assertFalse(link.streaming)
+        self.assertEqual(link.start_count, 1)
+        self.assertEqual(link.stop_count, 1)
+        self.assertEqual(link.q9_frame_count, 2)
+        self.assertEqual(link.q9_parse_error_count, 0)
+        self.assertEqual(link.get_latest_q9()["seq"], 18)
+
+    def test_q9_never_enables_question_2_streaming(self):
+        serial = FakeSerial()
+        serial.rx_chunks.append((self.Q9_LINE + "\n").encode("ascii"))
+        link = Stm32Link(serial)
+        link.poll_commands()
+
+        self.assertFalse(link.streaming)
+        self.assertEqual(link.start_count, 0)
+        self.assertEqual(link.send_state({"valid": False}), 0)
+        self.assertEqual(serial.tx_lines, [])
+
+    def test_q9_and_question_2_feedback_can_arrive_together(self):
+        serial = FakeSerial()
+        serial.rx_chunks.append(
+            (
+                self.Q9_LINE
+                + "\nF,10,1,1,1,0,0,0,0,0,0,0,0\n"
+                + self.Q9_LINE.replace("Q9,17", "Q9,18")
+                + "\n"
+            ).encode("ascii")
+        )
+        link = Stm32Link(serial)
+        link.poll_commands()
+
+        self.assertEqual(link.q9_frame_count, 2)
+        self.assertEqual(link.feedback_count, 1)
+        self.assertEqual(link.drain_feedback()[0]["seq"], 10)
+
+    def test_bad_q9_frames_do_not_replace_last_valid_frame(self):
+        serial = FakeSerial()
+        serial.rx_chunks.extend(
+            [
+                (self.Q9_LINE + "\n").encode("ascii"),
+                b"Q9,18,1,2,3,4,\xff,1,1,0,1,0,0\n",
+                b"Q9,broken\n",
+                b"Q9," + b"1" * 600 + b"\n",
+            ]
+        )
+        link = Stm32Link(serial)
+        for _ in range(4):
+            link.poll_commands()
+
+        self.assertEqual(link.get_latest_q9()["seq"], 17)
+        self.assertEqual(link.q9_frame_count, 1)
+        self.assertEqual(link.q9_parse_error_count, 3)
+        self.assertGreaterEqual(link.rx_error_count, 2)
+        self.assertLessEqual(len(link.rx_buffer), 512)
+
+    def test_q9_sequence_gap_uses_unsigned_wrap_and_ignores_repeats(self):
+        serial = FakeSerial()
+
+        def q9(sequence):
+            return (
+                "Q9,{},1,2,3,4,5,1,1,0,6,0,0\n".format(sequence)
+            ).encode("ascii")
+
+        serial.rx_chunks.extend(
+            [
+                q9(0xFFFFFFFE),
+                q9(1),
+                q9(1),
+                q9(0),
+                q9(2),
+            ]
+        )
+        link = Stm32Link(serial)
+        gaps = []
+        for _ in range(5):
+            link.poll_commands()
+            gaps.append(link.get_latest_q9()["seq_gap"])
+
+        self.assertEqual(gaps, [0, 2, 0, 0, 0])
+        self.assertEqual(link.q9_sequence_gap_count, 2)
+        self.assertEqual(link.last_q9_seq, 2)
+
+    def test_q9_snapshot_is_copied_and_overlay_is_compact(self):
+        link = Stm32Link(FakeSerial())
+        self.assertIsNone(link.get_latest_q9())
+        frame = parse_q9_line(self.Q9_LINE)
+        link._queue_q9(frame)
+
+        snapshot = link.get_latest_q9()
+        snapshot["motor_position"] = 0
+        self.assertEqual(link.get_latest_q9()["motor_position"], 4897)
+        self.assertEqual(
+            q9_overlay_lines(link.get_latest_q9()),
+            (
+                "Q9 P:4897",
+                "X:-12.3 Y:4.8 Z:90.6",
+                "IMU:V POS:V RX:0 N:84",
+                "DIR:-1 MOVE:0",
+            ),
+        )
 
 
 if __name__ == "__main__":
