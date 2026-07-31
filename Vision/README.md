@@ -208,6 +208,10 @@ Vision/windows/start_operator_console.cmd
 部署重启、开始/结束录像和截图。控制台与 Codex
 共用 `127.0.0.1:8770` 的 JSON/画面接口，不需要自动操作浏览器。它背后仍会
 检查全部板端 Python 源码，按内容哈希通过 SSH/SFTP 上传成可回退版本。
+波形区提供 13 组实时信号：6 组视觉输出和 7 组 STM32 控制反馈。点击
+“波形”可逐项勾选，也可用“常用 / 视觉 / 控制 / 全部”快速切换；选择会
+保存在本机浏览器。默认只显示视觉位置、控制位置与误差、PID 和实际电机
+命令，避免同时绘制过多曲线影响观察。
 结构化 API、命令行、日志、定时实验与回退说明见
 [`VISION_AGENT.md`](VISION_AGENT.md)。
 
@@ -254,6 +258,9 @@ python Vision\windows\stream_receiver.py --device-ip 192.168.1.50
 - `S`：保存带当前叠加层的截图。
 - 浏览器控制台的 **AI CONTROL** 面板只显示已安装模型、统一置信度阈值、
   IoU、目标位置和短时续跟帧数；5%、13%、20%、30% 可一键预选。
+- 波形选择器可显示视觉位置、速度、误差、AI 置信度、识别 FPS、链路耗时，
+  以及 STM32 控制位置/误差、速度、PID、电机命令、视觉帧龄、反馈丢失和
+  HAL 电机状态。
 - 调整后点击**应用 AI 配置**；只有显示“设备已确认应用”才算生效并持久化。
 - 红色圆圈表示当帧真实检测点；黄色菱形表示发给控制链路使用的滤波/预测
   位置；紫色十字是目标停球点。
@@ -267,7 +274,8 @@ python Vision\windows\stream_receiver.py --device-ip 192.168.1.50
 Vision/captures/stream_sessions/stream_YYYYMMDD_HHMMSS/
   video.mp4          # Windows H.264 录像（当前源为 20 FPS）
   tracking.csv       # 设备识别时间轴的结构化遥测
-  telemetry.jsonl    # status/tracking/ACK 原始报文
+  stm32_feedback.csv # STM32 PID、实际电机命令、视觉帧龄与 HAL状态
+  telemetry.jsonl    # status/tracking/stm32_feedback/ACK 原始报文
   video_frames.csv   # 解码帧时间戳、匹配遥测、延迟和主动丢帧
   events.jsonl       # 订阅、调参、实验标记和异常事件
   session.json       # 本次地址、参数、数量和结束状态
@@ -298,6 +306,19 @@ UDP日志频率、设备识别 FPS、检测耗时、视频延迟、视频/遥测
 再手动运行分析命令。没有有效轨迹时速度未知，分析器会单列为 `untracked`，
 不会再误归到“慢速”。未标记整段的 `measured/valid` 表示系统可用率，
 不是带真值的识别准确率；比较参数效果应以 `mark` 划定的实验阶段为准。
+
+STM32控制反馈可离线生成 SVG，无需安装额外绘图库：
+
+```powershell
+python Vision\tools\plot_stm32_feedback.py `
+  Vision\captures\stream_sessions\<本次目录>
+```
+
+输出为同目录的 `stm32_feedback.svg`，包含参考位置/目标/控制误差、速度、
+乘 `motor_direction` 前的 P/I/D、实际有符号电机命令和视觉数据年龄。
+橙色虚线表示 STM32反馈 `seq` 跳号，红色点线表示
+`motor_status != HAL_OK`。脚本也可直接读取 `stm32_feedback.csv` 或
+`telemetry.jsonl`。
 
 ### 让 Codex/脚本接入整轮实验
 
@@ -366,6 +387,7 @@ python Vision\windows\stream_receiver.py --duration 60
 stream_YYYYMMDD_HHMMSS/
   video.mp4          # MaixCAM H.264 原码流无损封装
   tracking.csv       # 逐帧检测、滤波、速度与拒绝原因
+  stm32_feedback.csv # STM32控制反馈
   video_frames.csv   # 视频帧与遥测的时间匹配
   analysis.txt/json  # 自动统计报告
   session.json       # 设备实际参数和会话状态
@@ -421,6 +443,21 @@ B,-27,18
 协议实现位于 `maixcam/stm32_link.py` 和 `Core/Src/BallVision.c`，串口为
 115200、8N1。
 
+STM32每次平衡电机速度或停止命令后，通过同一 USART6 返回：
+
+```text
+F,<seq>,<mcu_ms>,<vision_frame>,<vision_age_ms>,<position_x10>,
+  <velocity_x10>,<error_x10>,<p_x100>,<i_x100>,<d_x100>,
+  <motor_command>,<motor_status>\n
+```
+
+MaixCAM非阻塞解析反馈：`x10` 字段除以 10，`x100` 字段除以 100；
+`motor_status` 的 0/1/2/3 分别对应
+`HAL_OK/HAL_ERROR/HAL_BUSY/HAL_TIMEOUT`。比赛图传模式将每条反馈转发为
+`stm32_feedback` UDP报文，由 Windows同时写入原始 `telemetry.jsonl` 和
+专用 `stm32_feedback.csv`；板端 `"record"` 兜底模式也写同名 CSV。
+反馈接收、网络转发和日志均不修改 50 Hz `B,...` 输出调度。
+
 ## 接线
 
 | MaixCAM | STM32F407 |
@@ -445,6 +482,6 @@ python -m unittest discover -s Vision\tests -v
 
 测试覆盖动态管道姿态、轴线投影、端点禁入区、金属色圆候选筛选、两帧确认、
 短时丢帧预测、色块几何约束、二维局部 ROI 边界、无漂移周期调度、
-STM32串口格式、UDP协议版本、订阅握手、
+STM32串口格式与控制反馈、UDP协议版本、订阅握手、
 参数白名单、视频时间戳匹配、低延迟 FFmpeg参数、Windows会话日志、
 本机迭代接口和 RTSP地址归一化。

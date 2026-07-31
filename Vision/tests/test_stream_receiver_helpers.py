@@ -8,6 +8,7 @@ sys.path.insert(0, str(WINDOWS_DIR))
 
 from stream_receiver import (
     _StopRequested,
+    _feedback_summary,
     _read_latest_frame,
     _subscribe_until_ack,
     _wait_for_status,
@@ -50,6 +51,30 @@ class _RetryReceiver:
 
 
 class StreamReceiverHelperTests(unittest.TestCase):
+    def test_feedback_summary_exposes_live_control_signals(self):
+        summary = _feedback_summary(
+            {
+                "session": "abc",
+                "transport_seq": 20,
+                "seq": 7,
+                "position_px": 12.5,
+                "velocity_px_s": -8.0,
+                "control_error_px": 1.5,
+                "p_term": 2.0,
+                "i_term": 0.5,
+                "d_term": -0.25,
+                "motor_command": -320,
+                "vision_age_ms": 18,
+                "motor_status": 0,
+                "raw_line": "not exposed",
+            }
+        )
+
+        self.assertEqual(summary["position_px"], 12.5)
+        self.assertEqual(summary["motor_command"], -320)
+        self.assertEqual(summary["vision_age_ms"], 18)
+        self.assertNotIn("raw_line", summary)
+
     def test_startup_wait_honors_stop_before_telemetry(self):
         with self.assertRaises(_StopRequested):
             _wait_for_status(

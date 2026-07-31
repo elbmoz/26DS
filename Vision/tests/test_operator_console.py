@@ -53,7 +53,8 @@ class OperatorConsoleHttpTests(unittest.TestCase):
         with urlopen(self.base_url + "/", timeout=2) as response:
             html = response.read().decode("utf-8")
         self.assertIn('id="metric-position"', html)
-        self.assertIn('id="position-chart"', html)
+        self.assertIn('id="wave-grid"', html)
+        self.assertIn('id="chart-picker-toggle"', html)
 
         with urlopen(self.base_url + "/api/state", timeout=2) as response:
             state = json.loads(response.read().decode("utf-8"))

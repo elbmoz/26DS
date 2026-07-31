@@ -38,6 +38,7 @@ class UdpVisionLink:
 
         self.sender = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sender.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        self.sender.setblocking(False)
 
         self.control = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.control.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)

@@ -190,6 +190,31 @@ def _tracking_summary(tracking):
     }
 
 
+def _feedback_summary(feedback):
+    if not feedback:
+        return None
+    fields = (
+        "session",
+        "transport_seq",
+        "device_ms",
+        "seq",
+        "seq_gap",
+        "mcu_ms",
+        "vision_frame",
+        "vision_age_ms",
+        "position_px",
+        "velocity_px_s",
+        "control_error_px",
+        "p_term",
+        "i_term",
+        "d_term",
+        "motor_command",
+        "motor_status",
+        "motor_status_name",
+    )
+    return {name: feedback.get(name) for name in fields}
+
+
 def _run_session_analysis(session_dir, video_path=None):
     analyzer = (
         Path(__file__).resolve().parents[1]
@@ -275,6 +300,20 @@ def main(argv=None):
                                 or time.time_ns()
                             ),
                             "tracking": _tracking_summary(packet),
+                        }
+                    )
+                )
+            )
+            receiver.add_feedback_listener(
+                lambda packet, live_bridge=bridge: (
+                    live_bridge.publish_telemetry(
+                        {
+                            "schema": 1,
+                            "host_epoch_ns": int(
+                                packet.get("_host_epoch_ns")
+                                or time.time_ns()
+                            ),
+                            "feedback": _feedback_summary(packet),
                         }
                     )
                 )
@@ -772,6 +811,9 @@ def main(argv=None):
                                 "offset_ms": sync_offset_ms,
                             },
                             "tracking": _tracking_summary(tracking),
+                            "feedback": _feedback_summary(
+                                receiver.feedback_snapshot()
+                            ),
                             "config": (
                                 {}
                                 if latest_status is None

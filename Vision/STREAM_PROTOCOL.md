@@ -7,6 +7,7 @@ GC4653
   ├─ RGB 480×360 -> 绿色管道姿态 -> 动态 ROI/轴线 -> 钢球检测 -> USART6 -> STM32
   └─ NV21 448×336 -> H.264/RTSP -> Windows
 
+STM32 USART6 feedback -> MaixCAM -> UDP stm32_feedback -> Windows 日志与实时波形
 MaixCAM UDP tracking/status -> Windows 日志与画面叠加
 Windows UDP set_config     -> MaixCAM 安全参数白名单
 ```
@@ -37,6 +38,28 @@ B,<error_px>,<velocity_px_s>\n
 两项均使用原 640 宽参考像素标定，视觉右侧为正。丢球或预测续航结束后发送
 `none\n`。STM32 停止题目时发送 `ok`，MaixCAM 停止输出。换行用于流式
 重同步，`B` 帧头用于拒绝其他串口文本。
+
+STM32 在每次平衡电机速度命令或停止命令后返回：
+
+```text
+F,<seq>,<mcu_ms>,<vision_frame>,<vision_age_ms>,<position_x10>,
+  <velocity_x10>,<error_x10>,<p_x100>,<i_x100>,<d_x100>,
+  <motor_command>,<motor_status>\n
+```
+
+该反馈与 `c2`/`ok` 共用 USART6 RX。MaixCAM 按换行重同步并使用 `F,`
+帧头识别反馈，不改变 `c2`/`ok` 语义。字段含义如下：
+
+| 字段 | 含义 |
+|---|---|
+| `seq` | STM32反馈尝试序号；跳号表示 USART6 忙时主动丢日志 |
+| `mcu_ms` | 电机命令下发后的 `HAL_GetTick()` 毫秒 |
+| `vision_frame` | 本次 PID 使用的 STM32视觉接收帧号 |
+| `vision_age_ms` | 下发命令时 STM32内视觉数据年龄 |
+| `position_x10`, `velocity_x10`, `error_x10` | 除以 10 后为参考像素位置、参考像素/秒、`target-position` |
+| `p_x100`, `i_x100`, `d_x100` | 除以 100 后为乘 `motor_direction` 之前的 PID 分量 |
+| `motor_command` | 方向变换、限幅、取整后的实际有符号速度命令 |
+| `motor_status` | 0=`HAL_OK`、1=`HAL_ERROR`、2=`HAL_BUSY`、3=`HAL_TIMEOUT` |
 
 ## 3. 会话建立
 
@@ -118,6 +141,26 @@ B,<error_px>,<velocity_px_s>\n
 1.5%～98.5%。管口反光即使通过色块几何筛选，也会计入
 `position_rejects` 而不会成为控制输出。
 
+### 4.4 stm32_feedback
+
+MaixCAM 每收到一条有效 `F` 帧就立即以独立 UDP 报文转发，不等待下一个
+30 Hz `tracking` 周期。UDP发送仍为非阻塞旁路，不参与 50 Hz UART调度。
+
+报文保留 STM32整数原值，并同时提供便于绘图的换算值：
+
+| 字段 | 含义 |
+|---|---|
+| `session` | MaixCAM进程会话 |
+| `transport_seq` | 与 tracking/status 共用的 UDP发送序号 |
+| `device_ms` | MaixCAM收到并转发该反馈的会话相对毫秒 |
+| `seq`、`mcu_ms`、`vision_frame`、`vision_age_ms` | STM32原始字段 |
+| `position_x10` ... `d_x100` | STM32原始定点数字段 |
+| `position_px`, `velocity_px_s`, `control_error_px` | 除以 10 后的工程量 |
+| `p_term`, `i_term`, `d_term` | 除以 100 后的 PID 分量 |
+| `motor_command`, `motor_status`, `motor_status_name` | 实际命令与 HAL状态 |
+| `seq_gap` | 与上一条有效反馈之间缺失的 STM32反馈尝试数 |
+| `raw_line` | 去除换行后的原始 `F,...` 行 |
+
 ## 5. 在线参数更新
 
 请求采用全有或全无语义：一个字段非法时整条请求不应用，并返回
@@ -167,6 +210,8 @@ $env:PIPE_BALL_CONTROL_TOKEN = "队伍自己的随机字符串"
 - `video_frames.csv`：记录每个 Windows解码帧的 `video_source_epoch_ns`、
   `video_pipeline_latency_ms`、`telemetry_match_delta_ms`、主动丢帧数以及
   匹配到的 `session/seq/device_ms/frame_id`。
+- `stm32_feedback.csv`：逐条记录控制反馈、Windows接收时间、STM32与
+  MaixCAM时间、视觉帧龄、PID分量、实际电机命令和 HAL状态。
 - `video.mp4`：Windows直接保存 MaixCAM 已编码的 H.264，结束时从临时
   MKV无损封装为 MP4；预览解码与录像共用同一条 RTSP连接，不做 x264
   二次编码。
@@ -178,6 +223,8 @@ Windows 根据同一时刻的 UDP 数据实时绘制。后台线程持续排空 
 ## 7. 故障行为
 
 - UDP遥测失败不会阻塞识别和 STM32 UART。
+- UART反馈解析使用 128 条有界队列；异常行只增加解析错误计数，不影响
+  `c2`/`ok` 和视觉输出。反馈序号跳号按 STM32主动丢日志处理。
 - RTSP客户端断开不会停止识别。
 - 视频时间戳附近找不到 UDP遥测时显示
   `VIDEO/TELEMETRY NOT SYNCED`，不得把最新位置强行画到旧画面。

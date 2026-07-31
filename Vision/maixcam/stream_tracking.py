@@ -22,6 +22,7 @@ from stm32_link import Stm32Link
 from stream_protocol import (
     config_snapshot,
     make_status_packet,
+    make_stm32_feedback_packet,
     make_tracking_packet,
 )
 
@@ -164,6 +165,17 @@ def main():
             if app.need_exit():
                 break
             stm32_link.poll_commands()
+            feedback_device_ms = time.ticks_ms() - start_ms
+            for feedback in stm32_link.drain_feedback():
+                link.send(
+                    make_stm32_feedback_packet(
+                        session_id,
+                        sequence,
+                        feedback_device_ms,
+                        feedback,
+                    )
+                )
+                sequence += 1
             for event in link.poll_controls(detector, tracker, cfg):
                 if event["ok"]:
                     print(

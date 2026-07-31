@@ -87,6 +87,36 @@ TRACKING_FIELDS = (
     "pipe_score",
 )
 
+STM32_FEEDBACK_FIELDS = (
+    "host_epoch_ns",
+    "host_monotonic_ns",
+    "source_ip",
+    "session",
+    "transport_seq",
+    "device_ms",
+    "seq",
+    "seq_gap",
+    "mcu_ms",
+    "vision_frame",
+    "vision_age_ms",
+    "position_x10",
+    "velocity_x10",
+    "error_x10",
+    "p_x100",
+    "i_x100",
+    "d_x100",
+    "position_px",
+    "velocity_px_s",
+    "control_error_px",
+    "p_term",
+    "i_term",
+    "d_term",
+    "motor_command",
+    "motor_status",
+    "motor_status_name",
+    "raw_line",
+)
+
 VIDEO_FRAME_FIELDS = (
     "preview_frame_id",
     "host_epoch_ns",
@@ -169,6 +199,7 @@ class SessionLogger:
         self.started_monotonic_ns = time.monotonic_ns()
         self.packet_count = 0
         self.tracking_count = 0
+        self.feedback_count = 0
         self.video_frame_count = 0
         self._lock = threading.Lock()
 
@@ -187,6 +218,15 @@ class SessionLogger:
             extrasaction="ignore",
         )
         self._tracking.writeheader()
+        self._feedback_file = (
+            self.session_dir / "stm32_feedback.csv"
+        ).open("w", encoding="utf-8", newline="")
+        self._feedback = csv.DictWriter(
+            self._feedback_file,
+            fieldnames=STM32_FEEDBACK_FIELDS,
+            extrasaction="ignore",
+        )
+        self._feedback.writeheader()
         self._video_file = (self.session_dir / "video_frames.csv").open(
             "w", encoding="utf-8", newline=""
         )
@@ -217,9 +257,13 @@ class SessionLogger:
             if packet.get("type") == "tracking":
                 self._tracking.writerow(enriched)
                 self.tracking_count += 1
+            elif packet.get("type") == "stm32_feedback":
+                self._feedback.writerow(enriched)
+                self.feedback_count += 1
             if self.packet_count % 30 == 0:
                 self._raw.flush()
                 self._tracking_file.flush()
+                self._feedback_file.flush()
 
     def log_video_frame(
         self,
@@ -289,6 +333,7 @@ class SessionLogger:
                 "ended_monotonic_ns": time.monotonic_ns(),
                 "packet_count": self.packet_count,
                 "tracking_count": self.tracking_count,
+                "feedback_count": self.feedback_count,
                 "video_frame_count": self.video_frame_count,
             }
         )
@@ -306,6 +351,7 @@ class SessionLogger:
                 self._raw,
                 self._events,
                 self._tracking_file,
+                self._feedback_file,
                 self._video_file,
             ):
                 try:
@@ -322,6 +368,7 @@ class TelemetryReceiver:
         self.bind_host = bind_host
         self.invalid_packets = 0
         self.latest_tracking = None
+        self.latest_feedback = None
         self.latest_status = None
         self.latest_ack = None
         self.device_ip = None
@@ -329,6 +376,7 @@ class TelemetryReceiver:
         self._tracking_history = deque(maxlen=900)
         self._tracking_session = None
         self._tracking_listeners = []
+        self._feedback_listeners = []
         self._acks = {}
         self._condition = threading.Condition()
         self._stop = threading.Event()
@@ -353,6 +401,13 @@ class TelemetryReceiver:
             raise TypeError("tracking listener must be callable")
         with self._condition:
             self._tracking_listeners.append(listener)
+        return listener
+
+    def add_feedback_listener(self, listener):
+        if not callable(listener):
+            raise TypeError("feedback listener must be callable")
+        with self._condition:
+            self._feedback_listeners.append(listener)
         return listener
 
     def _run(self):
@@ -387,6 +442,7 @@ class TelemetryReceiver:
             )
 
             tracking_listeners = ()
+            feedback_listeners = ()
             with self._condition:
                 packet_type = packet.get("type")
                 if packet_type == "tracking":
@@ -408,6 +464,11 @@ class TelemetryReceiver:
                     self.control_port = int(
                         packet.get("control_port", 42102)
                     )
+                elif packet_type == "stm32_feedback":
+                    self.latest_feedback = packet
+                    feedback_listeners = tuple(
+                        self._feedback_listeners
+                    )
                 elif packet_type in ("config_ack", "subscribe_ack"):
                     self.latest_ack = packet
                     request_id = packet.get("request_id")
@@ -420,6 +481,14 @@ class TelemetryReceiver:
                 except Exception as exc:
                     self.logger.log_event(
                         "tracking_listener_error",
+                        {"error": str(exc)},
+                    )
+            for listener in feedback_listeners:
+                try:
+                    listener(dict(packet))
+                except Exception as exc:
+                    self.logger.log_event(
+                        "feedback_listener_error",
                         {"error": str(exc)},
                     )
 
@@ -452,6 +521,14 @@ class TelemetryReceiver:
                 None
                 if self.latest_status is None
                 else dict(self.latest_status)
+            )
+
+    def feedback_snapshot(self):
+        with self._condition:
+            return (
+                None
+                if self.latest_feedback is None
+                else dict(self.latest_feedback)
             )
 
     def tracking_for_epoch(

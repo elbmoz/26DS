@@ -420,6 +420,143 @@ button {
   box-shadow: inset 0 0 0 1px rgba(67, 214, 177, 0.06);
 }
 
+.chart-selector {
+  position: relative;
+}
+
+.signal-toolbar #chart-picker-toggle {
+  min-width: 82px;
+  border-color: rgba(67, 214, 177, 0.34);
+  background: rgba(67, 214, 177, 0.08);
+  color: #b9c8ca;
+}
+
+#chart-picker-toggle b {
+  margin-left: 3px;
+  color: var(--accent);
+  font-weight: 650;
+}
+
+.chart-picker {
+  position: absolute;
+  z-index: 58;
+  right: 0;
+  bottom: 31px;
+  width: min(390px, calc(100vw - 32px));
+  padding: 13px;
+  border: 1px solid #34414a;
+  border-radius: 6px;
+  background: rgba(9, 14, 19, 0.98);
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.52);
+  animation: chart-picker-in 140ms cubic-bezier(0.2, 0.75, 0.2, 1) both;
+}
+
+.chart-picker-heading,
+.chart-picker-heading > div,
+.chart-picker-heading button,
+.chart-options label {
+  display: flex;
+}
+
+.chart-picker-heading {
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.chart-picker-heading > div {
+  flex-direction: column;
+  gap: 3px;
+}
+
+.chart-picker-heading strong {
+  color: #e4ecee;
+  font-size: 11px;
+}
+
+.chart-picker-heading span {
+  color: #71808a;
+  font-size: 9px;
+}
+
+.signal-toolbar .chart-picker-heading button {
+  width: 24px;
+  padding: 0;
+  align-items: center;
+  justify-content: center;
+  border-color: #2c3740;
+  color: #8d9aa1;
+  font-size: 15px;
+}
+
+.chart-presets {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 5px;
+  padding: 10px 0;
+}
+
+.signal-toolbar .chart-presets button {
+  border-color: #2b363f;
+  background: #10171d;
+  color: #9ba8ad;
+}
+
+.signal-toolbar .chart-presets button:hover {
+  border-color: rgba(67, 214, 177, 0.46);
+  color: #c5f3e7;
+}
+
+.chart-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  max-height: min(410px, 58vh);
+  overflow-y: auto;
+}
+
+.chart-options fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.chart-options legend {
+  width: 100%;
+  margin-bottom: 5px;
+  padding: 0 3px 6px;
+  border-bottom: 1px solid rgba(104, 121, 134, 0.22);
+  color: #64717a;
+  font-family: var(--mono);
+  font-size: 8px;
+}
+
+.chart-options label {
+  min-height: 27px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 5px;
+  border-radius: 3px;
+  color: #b5c0c4;
+  font-size: 9px;
+  cursor: pointer;
+}
+
+.chart-options label:hover {
+  background: #121a20;
+  color: #e1eaec;
+}
+
+.chart-options input {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
 .pipe-simulator {
   margin-top: 8px;
 }
@@ -539,9 +676,16 @@ button {
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: repeat(4, minmax(0, 1fr));
+  grid-template-rows: repeat(
+    var(--chart-count, 4),
+    minmax(118px, 1fr)
+  );
+  overflow-x: hidden;
+  overflow-y: auto;
   gap: 1px;
   background: var(--line);
+  scrollbar-color: #34414a #090d12;
+  scrollbar-width: thin;
 }
 
 .wave-panel {
@@ -554,6 +698,7 @@ button {
   overflow: hidden;
   background: #090d12;
   transition: background 120ms ease, opacity 140ms ease;
+  animation: chart-panel-in 150ms ease-out both;
 }
 
 .wave-panel:hover {
@@ -569,6 +714,33 @@ button {
 }
 
 .wave-panel figcaption > span {
+  white-space: nowrap;
+}
+
+.chart-panel-heading {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  overflow: hidden;
+}
+
+.chart-panel-heading > b {
+  color: #d8e1e4;
+  font-size: 9px;
+  font-weight: 630;
+}
+
+.series-legends {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  color: #7f8c94;
+}
+
+.series-legends > span {
   white-space: nowrap;
 }
 
@@ -972,6 +1144,28 @@ body.chart-expanded .wave-grid > .wave-panel:not(.expanded) {
   padding: 14px 0;
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
+}
+
+@keyframes chart-picker-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes chart-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .ai-model-summary span,

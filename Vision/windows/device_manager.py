@@ -226,6 +226,10 @@ class MaixCamDeviceManager:
         with self._sftp.open(temporary, "wb") as handle:
             handle.write(str(value).encode("utf-8"))
         self._sftp.chmod(temporary, 0o644)
+        try:
+            self._sftp.remove(path)
+        except OSError:
+            pass
         self._sftp.rename(temporary, path)
 
     def _activate_release(self, release_id):

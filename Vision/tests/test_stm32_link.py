@@ -6,7 +6,13 @@ from pathlib import Path
 MAIXCAM_DIR = Path(__file__).resolve().parents[1] / "maixcam"
 sys.path.insert(0, str(MAIXCAM_DIR))
 
-from stm32_link import Stm32Link, format_stm32_line
+from stm32_link import (
+    Stm32Link,
+    feedback_csv_header,
+    feedback_csv_row,
+    format_stm32_line,
+    parse_stm32_feedback_line,
+)
 
 
 class FakeSerial:
@@ -70,6 +76,56 @@ class Stm32LinkTests(unittest.TestCase):
         self.assertTrue(link.streaming)
         self.assertEqual(link.start_count, 2)
         self.assertEqual(link.stop_count, 1)
+
+    def test_feedback_is_parsed_scaled_and_queued_across_reads(self):
+        serial = FakeSerial()
+        serial.rx_chunks.extend(
+            [
+                b"c2F,40,1234,88,7,15,-25,35,120,-20,5,",
+                b"-320,2\n",
+            ]
+        )
+        link = Stm32Link(serial)
+        link.poll_commands()
+        link.poll_commands()
+
+        self.assertTrue(link.streaming)
+        feedback = link.drain_feedback()
+        self.assertEqual(len(feedback), 1)
+        self.assertEqual(feedback[0]["seq"], 40)
+        self.assertEqual(feedback[0]["position_px"], 1.5)
+        self.assertEqual(feedback[0]["velocity_px_s"], -2.5)
+        self.assertEqual(feedback[0]["control_error_px"], 3.5)
+        self.assertEqual(feedback[0]["p_term"], 1.2)
+        self.assertEqual(feedback[0]["motor_status_name"], "HAL_BUSY")
+        self.assertEqual(link.feedback_error_count, 0)
+
+    def test_feedback_sequence_gaps_and_malformed_lines_are_counted(self):
+        serial = FakeSerial()
+        serial.rx_chunks.append(
+            b"F,10,1,1,1,0,0,0,0,0,0,0,0\n"
+            b"F,broken\n"
+            b"F,13,2,2,2,0,0,0,0,0,0,0,1\n"
+        )
+        link = Stm32Link(serial)
+        link.poll_commands()
+        feedback = link.drain_feedback()
+
+        self.assertEqual([item["seq_gap"] for item in feedback], [0, 2])
+        self.assertEqual(link.feedback_gap_count, 2)
+        self.assertEqual(link.feedback_error_count, 1)
+
+    def test_feedback_csv_preserves_raw_and_scaled_fields(self):
+        feedback = parse_stm32_feedback_line(
+            "F,1,20,3,4,15,25,-35,125,-50,0,200,0"
+        )
+        feedback["seq_gap"] = 0
+        header = feedback_csv_header()
+        row = feedback_csv_row(feedback, 99)
+        self.assertIn("position_x10", header)
+        self.assertIn("position_px", header)
+        self.assertIn("F,1,20,3,4", row)
+        self.assertTrue(row.startswith("99,1,0,20,3,4,"))
 
 
 if __name__ == "__main__":

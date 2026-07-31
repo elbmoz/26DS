@@ -21,7 +21,11 @@ from main import (
 )
 from tracking_log import RunStats, csv_header, tracking_row
 from loop_timing import periodic_due
-from stm32_link import Stm32Link
+from stm32_link import (
+    Stm32Link,
+    feedback_csv_header,
+    feedback_csv_row,
+)
 
 
 def make_run_directory():
@@ -104,6 +108,7 @@ def main():
     run_dir = make_run_directory()
     video_path = run_dir + "/video.mp4"
     log_path = run_dir + "/tracking.csv"
+    feedback_path = run_dir + "/stm32_feedback.csv"
     metadata_path = run_dir + "/metadata.txt"
     summary_path = run_dir + "/summary.txt"
     print("recording directory:", run_dir)
@@ -146,6 +151,8 @@ def main():
 
     log_file = open(log_path, "w")
     log_file.write(csv_header())
+    feedback_file = open(feedback_path, "w")
+    feedback_file.write(feedback_csv_header())
     recorder = None
     try:
         recorder = start_background_recorder(video_cam, video_path)
@@ -162,6 +169,11 @@ def main():
         next_send_ms = start_ms
         while not app.need_exit():
             stm32_link.poll_commands()
+            feedback_device_ms = time.ticks_ms() - start_ms
+            for feedback in stm32_link.drain_feedback():
+                feedback_file.write(
+                    feedback_csv_row(feedback, feedback_device_ms)
+                )
             try:
                 img = cam.read()
                 camera_errors = 0
@@ -254,6 +266,7 @@ def main():
             frame_id += 1
             if frame_id % max(1, cfg.RECORD_LOG_FLUSH_FRAMES) == 0:
                 log_file.flush()
+                feedback_file.flush()
 
             if (
                 cfg.RECORD_MAX_SECONDS > 0
@@ -269,6 +282,8 @@ def main():
                 print("video finish failed:", exc)
         log_file.flush()
         log_file.close()
+        feedback_file.flush()
+        feedback_file.close()
         stats.video_frames = int(elapsed_ms * cfg.RECORD_FPS / 1000)
         try:
             stats.encoded_bytes = os.stat(video_path)[6]

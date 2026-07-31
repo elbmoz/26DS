@@ -13,6 +13,7 @@ from stream_protocol import (
     decode_packet,
     encode_packet,
     make_set_config_request,
+    make_stm32_feedback_packet,
     make_subscribe_request,
     make_tracking_packet,
     parse_subscribe_request,
@@ -130,6 +131,39 @@ class StreamProtocolTests(unittest.TestCase):
         self.assertTrue(decoded["pipe_valid"])
         self.assertEqual(decoded["roi_w"], 470)
         self.assertEqual(len(decoded["roi_quad"]), 4)
+
+    def test_stm32_feedback_packet_preserves_mcu_sequence(self):
+        feedback = {
+            "seq": 17,
+            "seq_gap": 2,
+            "mcu_ms": 1234,
+            "vision_frame": 88,
+            "vision_age_ms": 7,
+            "position_x10": 15,
+            "velocity_x10": -25,
+            "error_x10": 35,
+            "p_x100": 120,
+            "i_x100": -20,
+            "d_x100": 5,
+            "position_px": 1.5,
+            "velocity_px_s": -2.5,
+            "control_error_px": 3.5,
+            "p_term": 1.2,
+            "i_term": -0.2,
+            "d_term": 0.05,
+            "motor_command": -320,
+            "motor_status": 2,
+            "motor_status_name": "HAL_BUSY",
+            "raw_line": "F,17,1234,88,7,15,-25,35,120,-20,5,-320,2",
+        }
+        packet = make_stm32_feedback_packet(
+            "session", 99, 500, feedback
+        )
+        decoded = decode_packet(encode_packet(packet))
+        self.assertEqual(decoded["type"], "stm32_feedback")
+        self.assertEqual(decoded["transport_seq"], 99)
+        self.assertEqual(decoded["seq"], 17)
+        self.assertEqual(decoded["motor_command"], -320)
 
     def test_parameter_validation_rejects_unknown_and_out_of_range(self):
         clean, errors = validate_parameters(

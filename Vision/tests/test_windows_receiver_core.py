@@ -56,6 +56,20 @@ class WindowsReceiverCoreTests(unittest.TestCase):
                 "valid": True,
             }
             logger.log_packet(packet, "10.16.6.1", 100, 200)
+            logger.log_packet(
+                {
+                    "v": 1,
+                    "type": "stm32_feedback",
+                    "session": "abc",
+                    "transport_seq": 2,
+                    "device_ms": 21,
+                    "seq": 7,
+                    "motor_status": 0,
+                },
+                "10.16.6.1",
+                101,
+                201,
+            )
             logger.log_video_frame(0, packet)
             logger.write_manifest({"status": "completed"})
             logger.close()
@@ -64,10 +78,20 @@ class WindowsReceiverCoreTests(unittest.TestCase):
                 (directory / "session.json").read_text(encoding="utf-8")
             )
             self.assertEqual(manifest["tracking_count"], 1)
+            self.assertEqual(manifest["feedback_count"], 1)
             self.assertEqual(manifest["video_frame_count"], 1)
             self.assertEqual(
                 len(
                     (directory / "tracking.csv")
+                    .read_text(encoding="utf-8")
+                    .strip()
+                    .splitlines()
+                ),
+                2,
+            )
+            self.assertEqual(
+                len(
+                    (directory / "stm32_feedback.csv")
                     .read_text(encoding="utf-8")
                     .strip()
                     .splitlines()
@@ -128,6 +152,38 @@ class WindowsReceiverCoreTests(unittest.TestCase):
                     950_000_000
                 )
                 self.assertEqual(oldest["seq"], 1)
+            finally:
+                receiver.stop()
+                logger.close()
+
+    def test_feedback_listener_and_snapshot_are_independent(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            logger = SessionLogger(temporary)
+            receiver = TelemetryReceiver(0, logger)
+            received = []
+            receiver.add_feedback_listener(received.append)
+            packet = {
+                "type": "stm32_feedback",
+                "session": "abc",
+                "transport_seq": 9,
+                "seq": 7,
+                "motor_command": -320,
+            }
+            try:
+                with receiver._condition:
+                    receiver.latest_feedback = packet
+                    listeners = tuple(receiver._feedback_listeners)
+                for listener in listeners:
+                    listener(dict(packet))
+
+                self.assertEqual(received[0]["seq"], 7)
+                snapshot = receiver.feedback_snapshot()
+                self.assertEqual(snapshot["motor_command"], -320)
+                snapshot["motor_command"] = 0
+                self.assertEqual(
+                    receiver.feedback_snapshot()["motor_command"],
+                    -320,
+                )
             finally:
                 receiver.stop()
                 logger.close()

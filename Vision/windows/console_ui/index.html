@@ -84,6 +84,27 @@
           <div class="signal-toolbar" aria-label="波形时间范围">
             <span id="telemetry-rate">实时推送 · 等待连接</span>
             <span class="chart-help">滚轮缩放 · 拖动回看</span>
+            <div class="chart-selector">
+              <button id="chart-picker-toggle" type="button" aria-controls="chart-picker" aria-expanded="false">
+                波形 <b id="chart-selection-count">4 / 13</b>
+              </button>
+              <div id="chart-picker" class="chart-picker" hidden>
+                <div class="chart-picker-heading">
+                  <div>
+                    <strong>选择显示信号</strong>
+                    <span>勾选后立即更新右侧波形</span>
+                  </div>
+                  <button id="chart-picker-close" type="button" aria-label="关闭信号选择">×</button>
+                </div>
+                <div class="chart-presets" aria-label="波形快捷组合">
+                  <button type="button" data-chart-preset="default">常用</button>
+                  <button type="button" data-chart-preset="vision">视觉</button>
+                  <button type="button" data-chart-preset="control">控制</button>
+                  <button type="button" data-chart-preset="all">全部</button>
+                </div>
+                <div id="chart-options" class="chart-options"></div>
+              </div>
+            </div>
             <button type="button" data-window-seconds="15">15s</button>
             <button type="button" class="active" data-window-seconds="30">30s</button>
             <button type="button" data-window-seconds="60">60s</button>
@@ -108,63 +129,7 @@
         </div>
       </section>
 
-      <section class="wave-grid" aria-label="实时波形">
-        <figure class="wave-panel">
-          <figcaption>
-            <span><i class="legend-dot position"></i>位置</span>
-            <span class="wave-panel-actions">
-              <strong id="wave-position-value">—</strong>
-              <button class="chart-expand" type="button" data-chart-expand aria-label="全屏查看位置波形" title="全屏查看">
-                <svg class="expand-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10"/></svg>
-                <svg class="collapse-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2.5V6H2.5M13.5 6H10V2.5M10 13.5V10h3.5M2.5 10H6v3.5"/></svg>
-              </button>
-            </span>
-          </figcaption>
-          <canvas id="position-chart" aria-label="钢球位置历史波形"></canvas>
-        </figure>
-        <figure class="wave-panel">
-          <figcaption>
-            <span><i class="legend-dot velocity"></i>速度</span>
-            <span class="wave-panel-actions">
-              <strong id="wave-velocity-value">—</strong>
-              <button class="chart-expand" type="button" data-chart-expand aria-label="全屏查看速度波形" title="全屏查看">
-                <svg class="expand-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10"/></svg>
-                <svg class="collapse-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2.5V6H2.5M13.5 6H10V2.5M10 13.5V10h3.5M2.5 10H6v3.5"/></svg>
-              </button>
-            </span>
-          </figcaption>
-          <canvas id="velocity-chart" aria-label="钢球速度历史波形"></canvas>
-        </figure>
-        <figure class="wave-panel">
-          <figcaption>
-            <span><i class="legend-dot fps"></i>识别帧率</span>
-            <span class="wave-panel-actions">
-              <strong id="wave-fps-value">—</strong>
-              <button class="chart-expand" type="button" data-chart-expand aria-label="全屏查看识别帧率波形" title="全屏查看">
-                <svg class="expand-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10"/></svg>
-                <svg class="collapse-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2.5V6H2.5M13.5 6H10V2.5M10 13.5V10h3.5M2.5 10H6v3.5"/></svg>
-              </button>
-            </span>
-          </figcaption>
-          <canvas id="fps-chart" aria-label="识别帧率历史波形"></canvas>
-        </figure>
-        <figure class="wave-panel">
-          <figcaption>
-            <span class="timing-legends">
-              <span><i class="legend-dot detect"></i>检测</span>
-              <span><i class="legend-dot latency"></i>图传</span>
-            </span>
-            <span class="wave-panel-actions">
-              <strong id="wave-timing-value">—</strong>
-              <button class="chart-expand" type="button" data-chart-expand aria-label="全屏查看耗时波形" title="全屏查看">
-                <svg class="expand-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10"/></svg>
-                <svg class="collapse-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2.5V6H2.5M13.5 6H10V2.5M10 13.5V10h3.5M2.5 10H6v3.5"/></svg>
-              </button>
-            </span>
-          </figcaption>
-          <canvas id="timing-chart" aria-label="识别耗时与图传延迟历史波形"></canvas>
-        </figure>
-      </section>
+      <section id="wave-grid" class="wave-grid" aria-label="已选择的实时波形"></section>
     </section>
   </main>
 

@@ -410,6 +410,48 @@ def make_tracking_packet(
     }
 
 
+def make_stm32_feedback_packet(
+    session_id,
+    transport_sequence,
+    device_ms,
+    feedback,
+):
+    """Wrap one parsed STM32 control feedback frame for UDP forwarding."""
+    packet = {
+        "v": PROTOCOL_VERSION,
+        "type": "stm32_feedback",
+        "session": str(session_id),
+        "transport_seq": int(transport_sequence),
+        "device_ms": int(device_ms),
+    }
+    fields = (
+        "seq",
+        "seq_gap",
+        "mcu_ms",
+        "vision_frame",
+        "vision_age_ms",
+        "position_x10",
+        "velocity_x10",
+        "error_x10",
+        "p_x100",
+        "i_x100",
+        "d_x100",
+        "position_px",
+        "velocity_px_s",
+        "control_error_px",
+        "p_term",
+        "i_term",
+        "d_term",
+        "motor_command",
+        "motor_status",
+        "motor_status_name",
+        "raw_line",
+    )
+    for name in fields:
+        packet[name] = feedback[name]
+    return packet
+
+
 def make_status_packet(
     session_id,
     sequence,

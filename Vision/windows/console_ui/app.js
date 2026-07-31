@@ -28,6 +28,12 @@ const ui = {
   targetPercent: $("#target-percent"),
   iouPercent: $("#iou-percent"),
   coastFrames: $("#coast-frames"),
+  waveGrid: $("#wave-grid"),
+  chartPickerToggle: $("#chart-picker-toggle"),
+  chartPicker: $("#chart-picker"),
+  chartPickerClose: $("#chart-picker-close"),
+  chartOptions: $("#chart-options"),
+  chartSelectionCount: $("#chart-selection-count"),
 };
 
 let latestState = null;
@@ -46,6 +52,8 @@ let telemetryRateStartedMs = 0;
 let lastTelemetryKey = "";
 let lastTelemetrySession = "";
 let lastTelemetrySeq = null;
+let lastFeedbackSession = "";
+let lastFeedbackSeq = null;
 let historyWindowMs = 30000;
 let chartPanOffsetMs = 0;
 let chartHoverTimeMs = null;
@@ -53,9 +61,11 @@ let chartDragging = false;
 let chartDragStartX = 0;
 let chartDragStartPanMs = 0;
 let expandedChartPanel = null;
+let chartResizeObserver = null;
 let chartsDirty = true;
 let lastHistoryPruneMs = 0;
 const telemetryHistory = [];
+const feedbackHistory = [];
 const MAX_HISTORY_MS = 10 * 60 * 1000;
 const MIN_CHART_WINDOW_MS = 1000;
 const MAX_CHART_WINDOW_MS = 5 * 60 * 1000;
@@ -70,6 +80,30 @@ const chartColors = {
   detectPoint: "#ffd0b5",
   latency: "#b18cff",
   latencyPoint: "#ddc9ff",
+  error: "#ffb454",
+  errorPoint: "#ffd49c",
+  lateral: "#ef7d91",
+  lateralPoint: "#ffc0ca",
+  controllerPosition: "#54c7ec",
+  controllerPositionPoint: "#b7ecff",
+  target: "#8ee38e",
+  targetPoint: "#c8f6c8",
+  controllerVelocity: "#a78bfa",
+  controllerVelocityPoint: "#d8c7ff",
+  pTerm: "#ff6b6b",
+  pTermPoint: "#ffb2b2",
+  iTerm: "#4ecdc4",
+  iTermPoint: "#a8f3ee",
+  dTerm: "#ffe66d",
+  dTermPoint: "#fff3ae",
+  motor: "#f78c6c",
+  motorPoint: "#ffc1aa",
+  visionAge: "#82aaff",
+  visionAgePoint: "#c5d7ff",
+  gap: "#f59e0b",
+  gapPoint: "#ffd18a",
+  motorStatus: "#ef4444",
+  motorStatusPoint: "#ffaaaa",
   grid: "rgba(132, 144, 157, 0.13)",
   axis: "rgba(174, 185, 192, 0.48)",
   reference: "rgba(237, 243, 244, 0.26)",
@@ -86,6 +120,367 @@ const operationLabels = {
   device_stop: "停止板端",
   rollback: "版本回退",
 };
+
+const chartDefinitions = [
+  {
+    id: "position",
+    group: "vision",
+    groupLabel: "视觉输出",
+    title: "视觉位置",
+    source: "tracking",
+    axis: { fixed: true, minimum: 0, maximum: 1, step: 0.25 },
+    reference: (samples) =>
+      samples.length ? samples[samples.length - 1].target : 0.5,
+    formatAxis: (value) => `${Math.round(value * 100)}%`,
+    series: [
+      {
+        key: "position",
+        label: "位置",
+        color: chartColors.position,
+        pointColor: chartColors.positionPoint,
+        formatValue: (value) => `${(value * 100).toFixed(2)}%`,
+      },
+    ],
+  },
+  {
+    id: "velocity",
+    group: "vision",
+    groupLabel: "视觉输出",
+    title: "视觉速度",
+    source: "tracking",
+    axis: {
+      symmetric: true,
+      includeZero: true,
+      minimumSpan: 40,
+      fallbackMinimum: -100,
+      fallbackMaximum: 100,
+    },
+    reference: 0,
+    series: [
+      {
+        key: "velocity",
+        label: "速度",
+        color: chartColors.velocity,
+        pointColor: chartColors.velocityPoint,
+        formatValue: (value) => `${value.toFixed(1)} px/s`,
+      },
+    ],
+  },
+  {
+    id: "vision-errors",
+    group: "vision",
+    groupLabel: "视觉输出",
+    title: "视觉误差",
+    source: "tracking",
+    axis: {
+      symmetric: true,
+      includeZero: true,
+      minimumSpan: 20,
+      fallbackMinimum: -50,
+      fallbackMaximum: 50,
+    },
+    reference: 0,
+    series: [
+      {
+        key: "visualError",
+        label: "目标误差",
+        color: chartColors.error,
+        pointColor: chartColors.errorPoint,
+        formatValue: (value) => `${value.toFixed(1)} px`,
+      },
+      {
+        key: "lateral",
+        label: "横向偏差",
+        color: chartColors.lateral,
+        pointColor: chartColors.lateralPoint,
+        formatValue: (value) => `${value.toFixed(1)} px`,
+      },
+    ],
+  },
+  {
+    id: "quality",
+    group: "vision",
+    groupLabel: "视觉输出",
+    title: "AI 置信度",
+    source: "tracking",
+    axis: { fixed: true, minimum: 0, maximum: 100, step: 25 },
+    reference: null,
+    formatAxis: (value) => `${Math.round(value)}%`,
+    series: [
+      {
+        key: "quality",
+        label: "置信度",
+        color: chartColors.position,
+        pointColor: chartColors.positionPoint,
+        formatValue: (value) => `${value.toFixed(1)}%`,
+      },
+    ],
+  },
+  {
+    id: "fps",
+    group: "vision",
+    groupLabel: "视觉输出",
+    title: "识别帧率",
+    source: "tracking",
+    axis: {
+      minimumSpan: 10,
+      hardMinimum: 0,
+      fallbackMinimum: 0,
+      fallbackMaximum: 60,
+    },
+    reference: 30,
+    series: [
+      {
+        key: "fps",
+        label: "FPS",
+        color: chartColors.fps,
+        pointColor: chartColors.fpsPoint,
+        formatValue: (value) => `${value.toFixed(2)} FPS`,
+      },
+    ],
+  },
+  {
+    id: "timing",
+    group: "vision",
+    groupLabel: "视觉输出",
+    title: "视觉链路耗时",
+    source: "tracking",
+    axis: {
+      includeZero: true,
+      minimumSpan: 20,
+      hardMinimum: 0,
+      fallbackMinimum: 0,
+      fallbackMaximum: 100,
+    },
+    reference: null,
+    series: [
+      {
+        key: "detect",
+        label: "检测",
+        color: chartColors.detect,
+        pointColor: chartColors.detectPoint,
+        formatValue: (value) => `${value.toFixed(1)} ms`,
+      },
+      {
+        key: "latency",
+        label: "图传",
+        color: chartColors.latency,
+        pointColor: chartColors.latencyPoint,
+        formatValue: (value) => `${value.toFixed(1)} ms`,
+      },
+    ],
+  },
+  {
+    id: "controller-position",
+    group: "control",
+    groupLabel: "STM32 控制反馈",
+    title: "控制位置与误差",
+    source: "feedback",
+    axis: {
+      includeZero: true,
+      minimumSpan: 20,
+      fallbackMinimum: -100,
+      fallbackMaximum: 100,
+    },
+    reference: null,
+    series: [
+      {
+        key: "feedbackPosition",
+        label: "位置",
+        color: chartColors.controllerPosition,
+        pointColor: chartColors.controllerPositionPoint,
+        formatValue: (value) => `${value.toFixed(1)} px`,
+      },
+      {
+        key: "feedbackTarget",
+        label: "目标",
+        color: chartColors.target,
+        pointColor: chartColors.targetPoint,
+        formatValue: (value) => `${value.toFixed(1)} px`,
+      },
+      {
+        key: "controlError",
+        label: "误差",
+        color: chartColors.error,
+        pointColor: chartColors.errorPoint,
+        formatValue: (value) => `${value.toFixed(1)} px`,
+      },
+    ],
+  },
+  {
+    id: "controller-velocity",
+    group: "control",
+    groupLabel: "STM32 控制反馈",
+    title: "控制速度",
+    source: "feedback",
+    axis: {
+      symmetric: true,
+      includeZero: true,
+      minimumSpan: 40,
+      fallbackMinimum: -100,
+      fallbackMaximum: 100,
+    },
+    reference: 0,
+    series: [
+      {
+        key: "feedbackVelocity",
+        label: "速度",
+        color: chartColors.controllerVelocity,
+        pointColor: chartColors.controllerVelocityPoint,
+        formatValue: (value) => `${value.toFixed(1)} px/s`,
+      },
+    ],
+  },
+  {
+    id: "pid",
+    group: "control",
+    groupLabel: "STM32 控制反馈",
+    title: "PID 分量",
+    source: "feedback",
+    axis: {
+      symmetric: true,
+      includeZero: true,
+      minimumSpan: 20,
+      fallbackMinimum: -100,
+      fallbackMaximum: 100,
+    },
+    reference: 0,
+    series: [
+      {
+        key: "pTerm",
+        label: "P",
+        color: chartColors.pTerm,
+        pointColor: chartColors.pTermPoint,
+        formatValue: (value) => value.toFixed(2),
+      },
+      {
+        key: "iTerm",
+        label: "I",
+        color: chartColors.iTerm,
+        pointColor: chartColors.iTermPoint,
+        formatValue: (value) => value.toFixed(2),
+      },
+      {
+        key: "dTerm",
+        label: "D",
+        color: chartColors.dTerm,
+        pointColor: chartColors.dTermPoint,
+        formatValue: (value) => value.toFixed(2),
+      },
+    ],
+  },
+  {
+    id: "motor-command",
+    group: "control",
+    groupLabel: "STM32 控制反馈",
+    title: "实际电机命令",
+    source: "feedback",
+    axis: {
+      symmetric: true,
+      includeZero: true,
+      minimumSpan: 200,
+      fallbackMinimum: -1000,
+      fallbackMaximum: 1000,
+    },
+    reference: 0,
+    series: [
+      {
+        key: "motorCommand",
+        label: "命令",
+        color: chartColors.motor,
+        pointColor: chartColors.motorPoint,
+        formatValue: (value) => value.toFixed(0),
+      },
+    ],
+  },
+  {
+    id: "vision-age",
+    group: "control",
+    groupLabel: "STM32 控制反馈",
+    title: "控制使用的视觉帧龄",
+    source: "feedback",
+    axis: {
+      includeZero: true,
+      minimumSpan: 20,
+      hardMinimum: 0,
+      fallbackMinimum: 0,
+      fallbackMaximum: 100,
+    },
+    reference: 50,
+    series: [
+      {
+        key: "visionAge",
+        label: "帧龄",
+        color: chartColors.visionAge,
+        pointColor: chartColors.visionAgePoint,
+        formatValue: (value) => `${value.toFixed(0)} ms`,
+      },
+    ],
+  },
+  {
+    id: "feedback-gaps",
+    group: "control",
+    groupLabel: "STM32 控制反馈",
+    title: "反馈序列丢失",
+    source: "feedback",
+    axis: {
+      includeZero: true,
+      minimumSpan: 2,
+      hardMinimum: 0,
+      fallbackMinimum: 0,
+      fallbackMaximum: 4,
+    },
+    reference: 0,
+    series: [
+      {
+        key: "sequenceGap",
+        label: "丢失条数",
+        color: chartColors.gap,
+        pointColor: chartColors.gapPoint,
+        formatValue: (value) => value.toFixed(0),
+      },
+    ],
+  },
+  {
+    id: "motor-status",
+    group: "control",
+    groupLabel: "STM32 控制反馈",
+    title: "HAL 电机状态",
+    source: "feedback",
+    axis: { fixed: true, minimum: 0, maximum: 3, step: 1 },
+    reference: 0,
+    formatAxis: (value) =>
+      ["OK", "ERROR", "BUSY", "TIMEOUT"][Math.round(value)] || "—",
+    series: [
+      {
+        key: "motorStatus",
+        label: "状态",
+        color: chartColors.motorStatus,
+        pointColor: chartColors.motorStatusPoint,
+        formatValue: (value) =>
+          ["HAL_OK", "HAL_ERROR", "HAL_BUSY", "HAL_TIMEOUT"][
+            Math.round(value)
+          ] || String(value),
+      },
+    ],
+  },
+];
+
+const chartDefinitionById = new Map(
+  chartDefinitions.map((definition) => [definition.id, definition]),
+);
+const chartPresets = {
+  default: ["position", "controller-position", "pid", "motor-command"],
+  vision: chartDefinitions
+    .filter((definition) => definition.group === "vision")
+    .map((definition) => definition.id),
+  control: chartDefinitions
+    .filter((definition) => definition.group === "control")
+    .map((definition) => definition.id),
+  all: chartDefinitions.map((definition) => definition.id),
+};
+const CHART_SELECTION_STORAGE_KEY = "pipe-ball-visible-charts-v1";
+let selectedChartIds = loadChartSelection();
 
 function formatNumber(value, digits = 1, fallback = "—") {
   const number = Number(value);
@@ -236,9 +631,10 @@ function appendTelemetrySample(
   const session = String(tracking.session || "");
   const sequence = Number(tracking.seq);
   const key = `${session}:${tracking.seq}`;
-  const previousLatestTime = telemetryHistory.length
-    ? telemetryHistory[telemetryHistory.length - 1].t
-    : null;
+  const previousLatestTime =
+    telemetryHistory.length || feedbackHistory.length
+      ? chartLatestTime()
+      : null;
   if (lastTelemetrySession && session !== lastTelemetrySession) {
     telemetryHistory.length = 0;
     chartPanOffsetMs = 0;
@@ -272,6 +668,9 @@ function appendTelemetrySample(
     fps: finiteOrNull(tracking.fps),
     detect: finiteOrNull(tracking.detect_ms),
     latency: finiteOrNull(video.pipeline_latency_ms),
+    visualError: valid ? finiteOrNull(tracking.error_px) : null,
+    lateral: valid ? finiteOrNull(tracking.lateral_px) : null,
+    quality: finiteOrNull(tracking.quality),
     measured: Boolean(tracking.measured),
     valid,
     coasting: Boolean(tracking.coasting),
@@ -285,22 +684,88 @@ function appendTelemetrySample(
     chartPanOffsetMs += now - previousLatestTime;
   }
 
-  if (now - lastHistoryPruneMs >= 5000) {
-    const oldest = now - MAX_HISTORY_MS;
+  pruneHistories(now);
+  if (chartPanOffsetMs === 0) chartsDirty = true;
+}
+
+function appendFeedbackSample(feedback, sampleTimeMs = Date.now()) {
+  if (!feedback || feedback.seq == null) return;
+  const session = String(feedback.session || "");
+  const sequence = Number(
+    feedback.transport_seq == null
+      ? feedback.seq
+      : feedback.transport_seq,
+  );
+  if (lastFeedbackSession && session !== lastFeedbackSession) {
+    feedbackHistory.length = 0;
+    lastFeedbackSeq = null;
+    chartPanOffsetMs = 0;
+    chartHoverTimeMs = null;
+    updateChartLiveState();
+  }
+  if (
+    session === lastFeedbackSession &&
+    Number.isFinite(sequence) &&
+    lastFeedbackSeq != null &&
+    sequence <= lastFeedbackSeq
+  ) {
+    return;
+  }
+
+  const previousLatestTime =
+    telemetryHistory.length || feedbackHistory.length
+      ? chartLatestTime()
+      : null;
+  lastFeedbackSession = session;
+  lastFeedbackSeq = Number.isFinite(sequence) ? sequence : null;
+  const now = Number.isFinite(Number(sampleTimeMs))
+    ? Number(sampleTimeMs)
+    : Date.now();
+  const position = finiteOrNull(feedback.position_px);
+  const controlError = finiteOrNull(feedback.control_error_px);
+  feedbackHistory.push({
+    t: now,
+    feedbackPosition: position,
+    feedbackTarget:
+      position == null || controlError == null
+        ? null
+        : position + controlError,
+    feedbackVelocity: finiteOrNull(feedback.velocity_px_s),
+    controlError,
+    pTerm: finiteOrNull(feedback.p_term),
+    iTerm: finiteOrNull(feedback.i_term),
+    dTerm: finiteOrNull(feedback.d_term),
+    motorCommand: finiteOrNull(feedback.motor_command),
+    visionAge: finiteOrNull(feedback.vision_age_ms),
+    sequenceGap: finiteOrNull(feedback.seq_gap),
+    motorStatus: finiteOrNull(feedback.motor_status),
+  });
+  if (
+    chartPanOffsetMs > 0 &&
+    previousLatestTime != null &&
+    now > previousLatestTime
+  ) {
+    chartPanOffsetMs += now - previousLatestTime;
+  }
+  pruneHistories(now);
+  if (chartPanOffsetMs === 0) chartsDirty = true;
+}
+
+function pruneHistories(now) {
+  if (now - lastHistoryPruneMs < 5000) return;
+  const oldest = now - MAX_HISTORY_MS;
+  for (const history of [telemetryHistory, feedbackHistory]) {
     let removeCount = 0;
     while (
-      removeCount < telemetryHistory.length &&
-      telemetryHistory[removeCount].t < oldest
+      removeCount < history.length &&
+      history[removeCount].t < oldest
     ) {
       removeCount += 1;
     }
-    if (removeCount > 0) {
-      telemetryHistory.splice(0, removeCount);
-      if (chartPanOffsetMs > 0) chartsDirty = true;
-    }
-    lastHistoryPruneMs = now;
+    if (removeCount > 0) history.splice(0, removeCount);
   }
-  if (chartPanOffsetMs === 0) chartsDirty = true;
+  if (chartPanOffsetMs > 0) chartsDirty = true;
+  lastHistoryPruneMs = now;
 }
 
 function renderSimulator(tracking, config) {
@@ -413,7 +878,8 @@ function ensureTelemetryStream(monitor) {
     try {
       const sample = JSON.parse(event.data);
       const tracking = sample.tracking;
-      if (!tracking) return;
+      const feedback = sample.feedback;
+      if (!tracking && !feedback) return;
       const receivedMs = Date.now();
       telemetryEventCount += 1;
       telemetryRateCount += 1;
@@ -433,13 +899,20 @@ function ensureTelemetryStream(monitor) {
         telemetryRateStartedMs = receivedMs;
       }
       const monitorState = latestState?.monitor || {};
-      monitorState.tracking = tracking;
-      renderLiveTelemetry(
-        tracking,
-        monitorState.video || {},
-        monitorState.config || {},
-        Number(sample.host_epoch_ns) / 1_000_000,
-      );
+      const sampleTimeMs = Number(sample.host_epoch_ns) / 1_000_000;
+      if (tracking) {
+        monitorState.tracking = tracking;
+        renderLiveTelemetry(
+          tracking,
+          monitorState.video || {},
+          monitorState.config || {},
+          sampleTimeMs,
+        );
+      }
+      if (feedback) {
+        monitorState.feedback = feedback;
+        appendFeedbackSample(feedback, sampleTimeMs);
+      }
     } catch (_error) {
       return;
     }
@@ -483,16 +956,28 @@ function drawReference(context, left, top, width, height, value, minimum, maximu
 }
 
 function chartLatestTime() {
-  return telemetryHistory.length
-    ? telemetryHistory[telemetryHistory.length - 1].t
-    : Date.now();
+  const latest = [];
+  if (telemetryHistory.length) {
+    latest.push(telemetryHistory[telemetryHistory.length - 1].t);
+  }
+  if (feedbackHistory.length) {
+    latest.push(feedbackHistory[feedbackHistory.length - 1].t);
+  }
+  return latest.length ? Math.max(...latest) : Date.now();
+}
+
+function chartOldestTime() {
+  const oldest = [];
+  if (telemetryHistory.length) oldest.push(telemetryHistory[0].t);
+  if (feedbackHistory.length) oldest.push(feedbackHistory[0].t);
+  return oldest.length ? Math.min(...oldest) : chartLatestTime();
 }
 
 function clampChartPan(value, windowMs = historyWindowMs) {
-  if (!telemetryHistory.length) return 0;
+  if (!telemetryHistory.length && !feedbackHistory.length) return 0;
   const availableMs = Math.max(
     0,
-    chartLatestTime() - telemetryHistory[0].t - windowMs,
+    chartLatestTime() - chartOldestTime() - windowMs,
   );
   return clamp(Number(value) || 0, 0, availableMs);
 }
@@ -506,29 +991,29 @@ function chartViewRange() {
   };
 }
 
-function lowerBoundSample(time) {
+function lowerBoundSample(history, time) {
   let low = 0;
-  let high = telemetryHistory.length;
+  let high = history.length;
   while (low < high) {
     const middle = (low + high) >> 1;
-    if (telemetryHistory[middle].t < time) low = middle + 1;
+    if (history[middle].t < time) low = middle + 1;
     else high = middle;
   }
   return low;
 }
 
-function historyForCurrentWindow(range) {
-  if (!telemetryHistory.length) return [];
-  let startIndex = lowerBoundSample(range.startTime);
-  let endIndex = lowerBoundSample(range.endTime);
+function historyForCurrentWindow(history, range) {
+  if (!history.length) return [];
+  let startIndex = lowerBoundSample(history, range.startTime);
+  let endIndex = lowerBoundSample(history, range.endTime);
   if (startIndex > 0) startIndex -= 1;
   if (
-    endIndex < telemetryHistory.length &&
-    telemetryHistory[endIndex].t <= range.endTime
+    endIndex < history.length &&
+    history[endIndex].t <= range.endTime
   ) {
     endIndex += 1;
   }
-  return telemetryHistory.slice(startIndex, endIndex);
+  return history.slice(startIndex, endIndex);
 }
 
 function nearestSample(samples, time) {
@@ -1036,97 +1521,216 @@ function drawWaveChart(canvas, samples, range, options) {
 
 function renderCharts() {
   const range = chartViewRange();
-  const samples = historyForCurrentWindow(range);
-  const target = samples.length
-    ? samples[samples.length - 1].target
-    : 0.5;
+  for (const chartId of selectedChartIds) {
+    const definition = chartDefinitionById.get(chartId);
+    const canvas = document.querySelector(
+      `canvas[data-chart-id="${chartId}"]`,
+    );
+    if (!definition || !canvas) continue;
+    const history =
+      definition.source === "feedback"
+        ? feedbackHistory
+        : telemetryHistory;
+    const samples = historyForCurrentWindow(history, range);
+    const reference =
+      typeof definition.reference === "function"
+        ? definition.reference(samples)
+        : definition.reference;
+    drawWaveChart(canvas, samples, range, {
+      ...definition,
+      reference,
+      formatAxis: definition.formatAxis || formatAxisNumber,
+    });
+    text(
+      `chart-value-${chartId}`,
+      formatLatestChartValue(definition, samples),
+    );
+  }
+}
 
-  drawWaveChart($("#position-chart"), samples, range, {
-    axis: {
-      fixed: true,
-      minimum: 0,
-      maximum: 1,
-      step: 0.25,
-    },
-    reference: target ?? 0.5,
-    formatAxis: (value) => `${Math.round(value * 100)}%`,
-    series: [
-      {
-        key: "position",
-        label: "位置",
-        color: chartColors.position,
-        pointColor: chartColors.positionPoint,
-        formatValue: (value) => `${(value * 100).toFixed(2)}%`,
-      },
-    ],
-  });
-  drawWaveChart($("#velocity-chart"), samples, range, {
-    axis: {
-      symmetric: true,
-      includeZero: true,
-      includeReference: true,
-      minimumSpan: 40,
-      fallbackMinimum: -100,
-      fallbackMaximum: 100,
-    },
-    reference: 0,
-    formatAxis: formatAxisNumber,
-    series: [
-      {
-        key: "velocity",
-        label: "速度",
-        color: chartColors.velocity,
-        pointColor: chartColors.velocityPoint,
-        formatValue: (value) => `${value.toFixed(1)} px/s`,
-      },
-    ],
-  });
-  drawWaveChart($("#fps-chart"), samples, range, {
-    axis: {
-      minimumSpan: 10,
-      hardMinimum: 0,
-      fallbackMinimum: 0,
-      fallbackMaximum: 60,
-    },
-    reference: 30,
-    formatAxis: formatAxisNumber,
-    series: [
-      {
-        key: "fps",
-        label: "FPS",
-        color: chartColors.fps,
-        pointColor: chartColors.fpsPoint,
-        formatValue: (value) => value.toFixed(2),
-      },
-    ],
-  });
-  drawWaveChart($("#timing-chart"), samples, range, {
-    axis: {
-      includeZero: true,
-      minimumSpan: 20,
-      hardMinimum: 0,
-      fallbackMinimum: 0,
-      fallbackMaximum: 100,
-    },
-    reference: null,
-    formatAxis: formatAxisNumber,
-    series: [
-      {
-        key: "detect",
-        label: "检测",
-        color: chartColors.detect,
-        pointColor: chartColors.detectPoint,
-        formatValue: (value) => `${value.toFixed(1)} ms`,
-      },
-      {
-        key: "latency",
-        label: "图传",
-        color: chartColors.latency,
-        pointColor: chartColors.latencyPoint,
-        formatValue: (value) => `${value.toFixed(1)} ms`,
-      },
-    ],
-  });
+function formatLatestChartValue(definition, samples) {
+  for (let index = samples.length - 1; index >= 0; index -= 1) {
+    const sample = samples[index];
+    const values = definition.series
+      .map((series) => {
+        const value = sample[series.key];
+        return Number.isFinite(value)
+          ? {
+              label: series.label,
+              value: series.formatValue(value),
+            }
+          : null;
+      })
+      .filter(Boolean);
+    if (!values.length) continue;
+    if (values.length === 1) return values[0].value;
+    return values
+      .map((item) => `${item.label} ${item.value}`)
+      .join(" · ");
+  }
+  return "—";
+}
+
+function loadChartSelection() {
+  try {
+    const stored = JSON.parse(
+      localStorage.getItem(CHART_SELECTION_STORAGE_KEY) || "null",
+    );
+    if (Array.isArray(stored)) {
+      const valid = stored.filter((id) =>
+        chartDefinitionById.has(String(id)),
+      );
+      if (valid.length) return [...new Set(valid)];
+    }
+  } catch (_error) {
+    // Fall back to the operator-focused default below.
+  }
+  return [...chartPresets.default];
+}
+
+function saveChartSelection() {
+  try {
+    localStorage.setItem(
+      CHART_SELECTION_STORAGE_KEY,
+      JSON.stringify(selectedChartIds),
+    );
+  } catch (_error) {
+    // The charts still work when browser storage is unavailable.
+  }
+}
+
+function setChartPickerOpen(open) {
+  const nextOpen = Boolean(open);
+  ui.chartPicker.hidden = !nextOpen;
+  ui.chartPickerToggle.setAttribute(
+    "aria-expanded",
+    String(nextOpen),
+  );
+}
+
+function setChartSelection(ids) {
+  const requested = new Set(ids.map(String));
+  const next = chartDefinitions
+    .map((definition) => definition.id)
+    .filter((id) => requested.has(id));
+  if (!next.length) {
+    showToast("至少保留一个波形", true);
+    return;
+  }
+  selectedChartIds = next;
+  saveChartSelection();
+  renderChartPanels();
+}
+
+function renderChartOptions() {
+  ui.chartOptions.replaceChildren();
+  for (const group of ["vision", "control"]) {
+    const definitions = chartDefinitions.filter(
+      (definition) => definition.group === group,
+    );
+    const section = document.createElement("fieldset");
+    const legend = document.createElement("legend");
+    legend.textContent = definitions[0].groupLabel;
+    section.append(legend);
+    for (const definition of definitions) {
+      const label = document.createElement("label");
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.value = definition.id;
+      input.checked = selectedChartIds.includes(definition.id);
+      input.addEventListener("change", () => {
+        const next = new Set(selectedChartIds);
+        if (input.checked) next.add(definition.id);
+        else next.delete(definition.id);
+        if (!next.size) {
+          input.checked = true;
+          showToast("至少保留一个波形", true);
+          return;
+        }
+        setChartSelection([...next]);
+      });
+      const copy = document.createElement("span");
+      copy.textContent = definition.title;
+      label.append(input, copy);
+      section.append(label);
+    }
+    ui.chartOptions.append(section);
+  }
+}
+
+function createChartPanel(definition) {
+  const panel = document.createElement("figure");
+  panel.className = "wave-panel";
+  panel.dataset.chartId = definition.id;
+
+  const caption = document.createElement("figcaption");
+  const heading = document.createElement("span");
+  heading.className = "chart-panel-heading";
+  const title = document.createElement("b");
+  title.textContent = definition.title;
+  const legends = document.createElement("span");
+  legends.className = "series-legends";
+  for (const series of definition.series) {
+    const legend = document.createElement("span");
+    const dot = document.createElement("i");
+    dot.className = "legend-dot";
+    dot.style.background = series.color;
+    legend.append(dot, document.createTextNode(series.label));
+    legends.append(legend);
+  }
+  heading.append(title, legends);
+
+  const actions = document.createElement("span");
+  actions.className = "wave-panel-actions";
+  const value = document.createElement("strong");
+  value.id = `chart-value-${definition.id}`;
+  value.textContent = "—";
+  const expand = document.createElement("button");
+  expand.className = "chart-expand";
+  expand.type = "button";
+  expand.dataset.chartExpand = "";
+  expand.setAttribute(
+    "aria-label",
+    `全屏查看${definition.title}波形`,
+  );
+  expand.title = "全屏查看";
+  expand.innerHTML =
+    '<svg class="expand-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10"/></svg>' +
+    '<svg class="collapse-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2.5V6H2.5M13.5 6H10V2.5M10 13.5V10h3.5M2.5 10H6v3.5"/></svg>';
+  actions.append(value, expand);
+  caption.append(heading, actions);
+
+  const canvas = document.createElement("canvas");
+  canvas.dataset.chartId = definition.id;
+  canvas.setAttribute(
+    "aria-label",
+    `${definition.title}历史波形`,
+  );
+  panel.append(caption, canvas);
+  installChartInteraction(canvas);
+  if (chartResizeObserver) chartResizeObserver.observe(canvas);
+  expand.setAttribute("aria-expanded", "false");
+  expand.addEventListener("click", () => setExpandedChart(panel));
+  return panel;
+}
+
+function renderChartPanels() {
+  if (expandedChartPanel) setExpandedChart(null);
+  ui.waveGrid.replaceChildren();
+  for (const chartId of selectedChartIds) {
+    const definition = chartDefinitionById.get(chartId);
+    if (definition) {
+      ui.waveGrid.append(createChartPanel(definition));
+    }
+  }
+  ui.waveGrid.style.setProperty(
+    "--chart-count",
+    String(selectedChartIds.length),
+  );
+  ui.chartSelectionCount.textContent =
+    `${selectedChartIds.length} / ${chartDefinitions.length}`;
+  renderChartOptions();
+  chartsDirty = true;
 }
 
 function updateChartLiveState() {
@@ -1179,7 +1783,7 @@ function installChartInteraction(canvas) {
     "wheel",
     (event) => {
       event.preventDefault();
-      if (!telemetryHistory.length) return;
+      if (!telemetryHistory.length && !feedbackHistory.length) return;
       const geometry = chartPointerGeometry(
         canvas,
         event.clientX,
@@ -1219,7 +1823,7 @@ function installChartInteraction(canvas) {
   });
 
   canvas.addEventListener("pointermove", (event) => {
-    if (!telemetryHistory.length) return;
+    if (!telemetryHistory.length && !feedbackHistory.length) return;
     const geometry = chartPointerGeometry(
       canvas,
       event.clientX,
@@ -1420,6 +2024,7 @@ function renderState(state) {
       button.id === "inspector-close" ||
       button.id === "chart-live" ||
       button.classList.contains("chart-expand") ||
+      button.closest(".chart-selector") ||
       button.dataset.windowSeconds
     ) {
       return;
@@ -1523,6 +2128,11 @@ document.addEventListener("keydown", (event) => {
     setExpandedChart(null);
     return;
   }
+  if (!ui.chartPicker.hidden) {
+    setChartPickerOpen(false);
+    ui.chartPickerToggle.focus();
+    return;
+  }
   setInspectorOpen(false);
 });
 
@@ -1547,12 +2157,27 @@ $$("[data-window-seconds]").forEach((button) => {
 });
 
 $("#chart-live").addEventListener("click", returnChartsToLive);
-$$(".wave-panel canvas").forEach(installChartInteraction);
-$$("[data-chart-expand]").forEach((button) => {
-  button.setAttribute("aria-expanded", "false");
+ui.chartPickerToggle.addEventListener("click", () => {
+  setChartPickerOpen(ui.chartPicker.hidden);
+});
+ui.chartPickerClose.addEventListener("click", () => {
+  setChartPickerOpen(false);
+  ui.chartPickerToggle.focus();
+});
+$$("[data-chart-preset]").forEach((button) => {
   button.addEventListener("click", () => {
-    setExpandedChart(button.closest(".wave-panel"));
+    setChartSelection(chartPresets[button.dataset.chartPreset] || []);
   });
+});
+document.addEventListener("pointerdown", (event) => {
+  if (
+    ui.chartPicker.hidden ||
+    ui.chartPicker.contains(event.target) ||
+    ui.chartPickerToggle.contains(event.target)
+  ) {
+    return;
+  }
+  setChartPickerOpen(false);
 });
 
 function aiFormMatchesDevice() {
@@ -1630,11 +2255,11 @@ ui.form.addEventListener("submit", async (event) => {
 });
 
 if ("ResizeObserver" in window) {
-  const chartResizeObserver = new ResizeObserver(() => {
+  chartResizeObserver = new ResizeObserver(() => {
     chartsDirty = true;
   });
-  $$("canvas").forEach((canvas) => chartResizeObserver.observe(canvas));
 }
+renderChartPanels();
 
 setInterval(pollState, 300);
 window.requestAnimationFrame(chartAnimationFrame);
