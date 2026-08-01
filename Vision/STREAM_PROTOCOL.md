@@ -12,7 +12,9 @@ MaixCAM UDP tracking/status -> Windows 日志与画面叠加
 Windows UDP set_config     -> MaixCAM 安全参数白名单
 ```
 
-电机控制只经过 STM32。网络协议不包含电机使能、运动或 PID 指令。
+电机控制只经过 STM32。普通视觉配置协议不包含电机使能或运动指令；独立的
+`pid_request` 白名单只允许问题2控制器的 RAM 参数、受控测试和停车操作，详见
+`PID_AUTO_TUNING.md`。
 
 ## 2. 端口
 
@@ -60,6 +62,17 @@ F,<seq>,<mcu_ms>,<vision_frame>,<vision_age_ms>,<position_x10>,
 | `p_x100`, `i_x100`, `d_x100` | 除以 100 后为球位置外环的 P/I/D 目标杆角分量，单位 ° |
 | `motor_command` | 杆角内环经方向、限幅、slew 和取整后的有符号速度命令 |
 | `motor_status` | 0=`HAL_OK`、1=`HAL_ERROR`、2=`HAL_BUSY`、3=`HAL_TIMEOUT` |
+
+自动调参首次交互后，完整串级状态使用 `F2`；高速组合实验使用 `F3`。F3保留
+F2全部字段，并追加：
+
+```text
+<tuning_sequence>,<tuning_phase>,<phase_elapsed_ms>
+```
+
+`tuning_sequence` 与 `PP` 命令及 `PA` ACK 的序号一致。phase 0～3依次表示
+准备回零、正阶跃、负阶跃和最终回零，4表示完成，5表示提前中止。Windows只用
+当前序号评分，旧序号的缓存帧会被忽略。
 
 ## 3. 会话建立
 
@@ -163,6 +176,8 @@ MaixCAM 每收到一条有效 `F` 帧就立即以独立 UDP 报文转发，不�
 
 ## 5. 在线参数更新
 
+### 5.1 视觉参数
+
 请求采用全有或全无语义：一个字段非法时整条请求不应用，并返回
 `config_ack.ok=false` 和逐字段错误。程序不会执行字符串表达式。
 
@@ -199,6 +214,16 @@ MaixCAM 每收到一条有效 `F` 帧就立即以独立 UDP 报文转发，不�
 ```powershell
 $env:PIPE_BALL_CONTROL_TOKEN = "队伍自己的随机字符串"
 ```
+
+### 5.2 STM32 RAM控制参数与高速profile
+
+Windows发送 `pid_request`，MaixCAM完成白名单校验后转成USART6的
+`PG/PS/PR/PT/PP/PX`。STM32在20 ms控制边界应用命令，再用`PA`返回实际参数；
+在收到`PA`前不能认为请求已生效。
+
+`PP`由STM32自主执行零/正/负/零四相profile，并以误差和速度连续稳定时间决定
+提前切相位。网络只负责下发一个profile和接收F3，不参与实验计时。参数范围、
+评分、剪枝和命令示例见仓库根目录的`PID_AUTO_TUNING.md`。
 
 ## 6. 时间同步与录像
 

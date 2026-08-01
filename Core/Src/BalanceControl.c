@@ -33,13 +33,13 @@ BalanceControlConfig balance_control_config = {
      * - P/D 稳定后仍有固定静差，最后才逐步增加 Ki。
      */
     .outer_kp_deg_per_px = 0.026044f,       /* 位置 P：误差每 1 px 产生的角度。 */
-    /* 首轮为 0；P/D 调稳后可从参考候选 0.03297 开始小步增加。 */
+    /* 当前保持 0；只有 P/D 已稳定且仍存在固定静差时才搜索 Ki。 */
     .outer_ki_deg_per_px_s = 0.0f,      /* 位置 I：用于消除固定静差。 */
     .outer_kd_deg_per_px_s = 0.0046f,     /* 速度 D：使用 -Kd*球速抑制冲过中心。 */
     .outer_integral_limit_px_s = 109.2f, /* 限制积分累积，防止积分饱和。 */
     /*
-     * 当前值允许 ±5.5°目标管道角；最终不得超过拟合得到的
-     * ±6.0°公共安全范围。首次排查方向时应临时调低到约 1～2°。
+     * 当前目标管道角限幅为 ±10.5°，并且不得超过下方同为
+     * ±10.5° 的实际杆角保护值。首次排查方向时可临时调低到约 1～2°。
      */
     .outer_angle_limit_deg = 10.5f,
 
@@ -50,7 +50,7 @@ BalanceControlConfig balance_control_config = {
     .soft_kp_scale = 0.75f,             /* 柔化区把基础 Kp 乘 0.55。 */
     .soft_kd_scale = 0.55f,             /* 柔化区把基础 Kd 乘 0.75。 */
     .soft_angle_limit_scale = 0.65f,    /* 柔化区把目标角限幅乘 0.65。 */
-    /* 首轮为 0；外环稳定后可从参考候选 0.10989 以下逐步增加。 */
+    /* 当前保持 0；基础外环稳定后再单独辨识近中心积分。 */
     .soft_ki_deg_per_px_s = 0.0f,       /* 柔化区单独使用的 Ki，不是基础 Ki 倍率。 */
     .fine_fast_kp_scale = 1.0f,        /* 精细区但球速较快时的 Kp 倍率。 */
     .fine_fast_ki_scale = 1.0,        /* 精细区高速时把 soft Ki 再乘 0.50。 */
@@ -94,17 +94,17 @@ BalanceControlConfig balance_control_config = {
      *
      * 首轮主要调以下五项：
      * - angle_kp_speed_per_deg：追角力度。追得慢就增大，来回摆就减小；
-     * - motor_speed_limit：最大速度。首轮限制为 30，确认安全后再放宽；
+     * - motor_speed_limit：最大速度，当前为 24；
      * - motor_slew_per_update：每周期速度变化。越小越柔和；
      * - motor_min_speed：克服静摩擦的最小速度；
      * - motor_speed_deadband：目标附近的停车死区。
      */
     .angle_kp_speed_per_deg = 2.5f,     /* 角度误差每 1°产生的速度命令。 */
     .angle_kd_speed_per_deg_s = 0.0f,   /* 在线阶跃测试辨识角速度阻尼。 */
-    .motor_speed_limit = 24.0f,         /* 最终速度命令绝对值不得超过 30。 */
+    .motor_speed_limit = 24.0f,         /* 最终速度命令绝对值不得超过 24。 */
     .motor_speed_deadband = 0.3f,       /* 连续速度落入该死区时命令为 0。 */
-    .motor_min_speed = 0.5f,            /* 最小非零命令 1；缩放成功时为 0.1 RPM。 */
-    .motor_slew_per_update = 150.0f,      /* 每 20 ms 最多改变 2 个速度命令单位。 */
+    .motor_min_speed = 0.5f,            /* 最小非零命令 0.5；缩放成功时为 0.05 RPM。 */
+    .motor_slew_per_update = 150.0f,    /* 每 20 ms 最多改变 150 个速度命令单位。 */
     /*
      * F6 驱动器加减速档。0 表示直接启停/换向；非零时数值越大加减速越快。
      * DS_Init() 会尝试启用 3 号电机 S_Vel_IS；成功时命令 1 = 0.1 RPM。
@@ -227,6 +227,42 @@ static void BalanceControl_SendMotorFeedback(uint32_t vision_frame,
                                              HAL_StatusTypeDef motor_status)
 {
     uint32_t now = HAL_GetTick();
+
+    if (BalanceTuning_FeedbackV3Enabled() != 0U) {
+        BallVisionFeedbackV3 feedback;
+        BallVisionFeedbackV2 *control = &feedback.control;
+
+        control->vision_frame = vision_frame;
+        control->vision_age_ms = (uint32_t)(now - vision_last_rx_ms);
+        control->position = ball_position;
+        control->velocity = ball_velocity;
+        control->control_error = balance_control_state.position_error;
+        control->p_term = balance_control_state.position_p_term;
+        control->i_term = balance_control_state.position_i_term;
+        control->d_term = balance_control_state.velocity_d_term;
+        control->target_rod_angle =
+            balance_control_state.target_rod_angle_deg;
+        control->actual_rod_angle = balance_control_state.rod_angle_deg;
+        control->rod_rate = balance_control_state.rod_rate_deg_s;
+        control->angle_error = balance_control_state.angle_error_deg;
+        control->desired_speed = balance_control_state.desired_motor_speed;
+        control->motor_command = motor_command;
+        control->position_age_ms =
+            (motor_position_monitor_state.update_count == 0U) ?
+            0xFFFFFFFFUL :
+            (uint32_t)(now - motor_position_monitor_state.last_update_ms);
+        control->position_valid =
+            balance_control_state.motor_position_valid;
+        control->protection_state = balance_control_state.protection_state;
+        control->motor_status = motor_status;
+        control->tuning_mode = BalanceTuning_GetMode();
+        feedback.tuning_sequence = BalanceTuning_GetProfileSequence();
+        feedback.tuning_phase = BalanceTuning_GetProfilePhase();
+        feedback.phase_elapsed_ms =
+            BalanceTuning_GetProfilePhaseElapsedMs(now);
+        (void)BallVision_SendFeedbackV3(&feedback);
+        return;
+    }
 
     if (BalanceTuning_FeedbackV2Enabled() != 0U) {
         BallVisionFeedbackV2 feedback;

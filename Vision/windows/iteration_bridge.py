@@ -151,6 +151,7 @@ class _BridgeHandler(BaseHTTPRequestHandler):
             "/pid/set": "pid_set",
             "/pid/reset": "pid_reset",
             "/pid/test": "pid_test",
+            "/pid/profile": "pid_profile",
             "/pid/stop": "pid_stop",
             "/mark": "mark",
             "/snapshot": "snapshot",

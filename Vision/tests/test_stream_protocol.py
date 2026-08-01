@@ -260,6 +260,27 @@ class StreamProtocolTests(unittest.TestCase):
         with self.assertRaises(ProtocolError):
             parse_pid_request(encode_packet(request), "secret")
 
+    def test_pid_profile_validates_mcu_timed_experiment(self):
+        request = make_pid_request(
+            "profile-1",
+            "secret",
+            "profile",
+            {
+                "mode": "outer",
+                "amplitude": 50,
+                "phase_ms": 1600,
+                "settle_band": 12,
+                "settle_rate": 30,
+                "settle_ms": 160,
+            },
+        )
+        request_id, action, params = parse_pid_request(
+            encode_packet(request), "secret"
+        )
+        self.assertEqual((request_id, action), ("profile-1", "profile"))
+        self.assertEqual(params["phase_ms"], 1600)
+        self.assertEqual(params["settle_band"], 12.0)
+
     def test_ai_model_and_threshold_validation(self):
         model = "/root/models/maixhub/312328/model_312328.mud"
         clean, errors = validate_parameters(

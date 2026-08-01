@@ -230,6 +230,9 @@ def _feedback_summary(feedback):
         "position_valid",
         "protection_state",
         "tuning_mode",
+        "tuning_sequence",
+        "tuning_phase",
+        "phase_elapsed_ms",
     )
     return {name: feedback.get(name) for name in fields}
 
@@ -784,6 +787,19 @@ def main(argv=None):
                                     "mode": body.get("mode"),
                                     "target": body.get("target"),
                                     "duration_ms": body.get("duration_ms"),
+                                },
+                                command_id=command_id,
+                            )
+                        elif command_type == "pid_profile":
+                            submit_pid(
+                                "profile",
+                                {
+                                    "mode": body.get("mode"),
+                                    "amplitude": body.get("amplitude"),
+                                    "phase_ms": body.get("phase_ms"),
+                                    "settle_band": body.get("settle_band"),
+                                    "settle_rate": body.get("settle_rate"),
+                                    "settle_ms": body.get("settle_ms"),
                                 },
                                 command_id=command_id,
                             )

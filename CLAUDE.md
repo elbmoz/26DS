@@ -59,10 +59,15 @@ Preprocessor defines: `USE_HAL_DRIVER;STM32F407xx`
    angle through brief dropouts for at most 120 ms before stopping.
    The current phase regulates to center (`target=0`); the later
    `+5 cm -> -5 cm` sequence has reserved pixel targets and a target setter.
-   `BalanceTuning.c/.h` adds USART6 RAM-only PID parameters, fixed inner/outer
-   step tests and F2 telemetry. STM32 applies parameters only at a 20 ms
-   control boundary and acknowledges them after application; it never writes
-   tuning values to Flash.
+   `BalanceTuning.c/.h` adds USART6 RAM-only PID parameters, compatible fixed
+   inner/outer step tests and the fast MCU-timed zero/positive/negative/return
+   profile. STM32 applies parameters only at a 20 ms control boundary and
+   acknowledges them after application; it never writes tuning values to
+   Flash. Profile timing and stable-condition phase changes remain on STM32,
+   while F3 adds the experiment sequence, phase and phase elapsed time to the
+   complete F2 cascade state. The Windows fast path uses historical winners as
+   re-tested seeds, a Sobol warm start, multivariate Optuna TPE, streaming
+   rejection and median verification of the finalists.
 10. `Task4PositionControl.c/.h` — Isolated Question 4 controller. It copies the
     Question 2 ball-position outer loop but removes the software motor-speed
     inner loop. The reviewed `-0.0020022658 rod deg / position count` mapping

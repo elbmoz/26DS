@@ -12,7 +12,7 @@ extern "C" {
  *   B,-12,35\n  signed center error in reference pixels and velocity
  *               in reference pixels per second
  *   none\n       no valid detection
- *   PG/PS/PR/PT/PX runtime tuning commands; see BalanceTuning.h
+ *   PG/PS/PR/PT/PP/PX runtime tuning commands; see BalanceTuning.h
  *
  * The receiver is armed only by BallVision_StartStream(). The STM32 sends
  * "c2" to start MaixCAM output and "ok" when a control task stops.
@@ -30,7 +30,9 @@ extern "C" {
  * Missing sequence numbers mean feedback was dropped because USART6 was
  * still transmitting. Motor control is never delayed to wait for logging.
  * After the first tuning command, feedback switches to the versioned F2 frame
- * containing both outer-loop and inner-loop state. PA is the STM32-side ACK.
+ * containing both outer-loop and inner-loop state. MCU-timed profiles use F3,
+ * which appends the experiment sequence, phase and phase elapsed time. PA is
+ * the STM32-side ACK.
  */
 extern volatile uint32_t ball_vision_parse_error_count;
 extern volatile uint8_t ball_vision_stream_active;
@@ -60,6 +62,14 @@ typedef struct
     HAL_StatusTypeDef motor_status;
     uint8_t tuning_mode;
 } BallVisionFeedbackV2;
+
+typedef struct
+{
+    BallVisionFeedbackV2 control;
+    uint32_t tuning_sequence;
+    uint8_t tuning_phase;
+    uint32_t phase_elapsed_ms;
+} BallVisionFeedbackV3;
 
 typedef struct
 {
@@ -95,6 +105,8 @@ HAL_StatusTypeDef BallVision_SendFeedback(uint32_t vision_frame,
                                           HAL_StatusTypeDef motor_status);
 HAL_StatusTypeDef BallVision_SendFeedbackV2(
     const BallVisionFeedbackV2 *feedback);
+HAL_StatusTypeDef BallVision_SendFeedbackV3(
+    const BallVisionFeedbackV3 *feedback);
 HAL_StatusTypeDef BallVision_SendTuningAck(
     const BallVisionTuningAck *ack);
 void BallVision_UART_RxCpltCallback(UART_HandleTypeDef *huart);

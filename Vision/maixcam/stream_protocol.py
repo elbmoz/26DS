@@ -517,6 +517,9 @@ def make_stm32_feedback_packet(
         "position_valid",
         "protection_state",
         "tuning_mode",
+        "tuning_sequence",
+        "tuning_phase",
+        "phase_elapsed_ms",
     )
     for name in fields:
         if name in feedback:
@@ -680,7 +683,7 @@ def parse_pid_request(data, expected_token):
         raise ProtocolError("unauthorized", "control token mismatch")
 
     action = packet.get("action")
-    if action not in ("get", "set", "reset", "test", "stop"):
+    if action not in ("get", "set", "reset", "test", "profile", "stop"):
         raise ProtocolError("invalid_action", "invalid PID action")
     params = packet.get("params", {})
     if not isinstance(params, dict):
@@ -728,6 +731,47 @@ def parse_pid_request(data, expected_token):
             "mode": mode,
             "target": target,
             "duration_ms": duration_ms,
+        }
+    elif action == "profile":
+        mode = str(params.get("mode", "")).lower()
+        if mode not in ("inner", "outer"):
+            raise ProtocolError(
+                "invalid_profile", "PID profile mode must be inner or outer"
+            )
+        try:
+            amplitude = float(params["amplitude"])
+            phase_ms = int(params["phase_ms"])
+            settle_band = float(params["settle_band"])
+            settle_rate = float(params["settle_rate"])
+            settle_ms = int(params["settle_ms"])
+        except (KeyError, TypeError, ValueError):
+            raise ProtocolError(
+                "invalid_profile",
+                "PID profile requires amplitude, phase_ms, settle_band, "
+                "settle_rate and settle_ms",
+            )
+        numbers = (amplitude, settle_band, settle_rate)
+        if (
+            not all(math.isfinite(number) for number in numbers)
+            or amplitude <= 0.0
+            or settle_band <= 0.0
+            or settle_rate <= 0.0
+            or phase_ms < 200
+            or phase_ms > 15000
+            or settle_ms < 40
+            or settle_ms > 1000
+            or settle_ms > phase_ms
+        ):
+            raise ProtocolError(
+                "invalid_profile", "invalid PID profile timing or thresholds"
+            )
+        clean = {
+            "mode": mode,
+            "amplitude": amplitude,
+            "phase_ms": phase_ms,
+            "settle_band": settle_band,
+            "settle_rate": settle_rate,
+            "settle_ms": settle_ms,
         }
     elif params:
         raise ProtocolError(

@@ -45,6 +45,12 @@ STM32_FEEDBACK_V2_RAW_FIELDS = (
     "tuning_mode",
 )
 
+STM32_FEEDBACK_V3_RAW_FIELDS = STM32_FEEDBACK_V2_RAW_FIELDS + (
+    "tuning_sequence",
+    "tuning_phase",
+    "phase_elapsed_ms",
+)
+
 PID_PARAMETER_ORDER = (
     "outer_kp",
     "outer_kd",
@@ -94,6 +100,9 @@ STM32_FEEDBACK_CSV_FIELDS = (
     "position_valid",
     "protection_state",
     "tuning_mode",
+    "tuning_sequence",
+    "tuning_phase",
+    "phase_elapsed_ms",
     "raw_line",
 )
 
@@ -139,7 +148,7 @@ def _decode_ascii(data):
 
 
 def parse_stm32_feedback_line(line):
-    """Parse one legacy ``F`` or complete ``F2`` controller frame."""
+    """Parse legacy ``F``, complete ``F2`` or profiled ``F3`` feedback."""
     text = _decode_ascii(line).strip()
     fields = text.split(",")
     if fields[0] == "F":
@@ -148,8 +157,11 @@ def parse_stm32_feedback_line(line):
     elif fields[0] == "F2":
         raw_fields = STM32_FEEDBACK_V2_RAW_FIELDS
         version = 2
+    elif fields[0] == "F3":
+        raw_fields = STM32_FEEDBACK_V3_RAW_FIELDS
+        version = 3
     else:
-        raise ValueError("STM32 feedback must start with F or F2")
+        raise ValueError("STM32 feedback must start with F, F2 or F3")
     if len(fields) != len(raw_fields) + 1:
         raise ValueError("invalid STM32 feedback field count")
 
@@ -174,7 +186,7 @@ def parse_stm32_feedback_line(line):
             "raw_line": text,
         }
     )
-    if version == 2:
+    if version >= 2:
         feedback.update(
             {
                 "target_rod_angle_deg": (
@@ -615,6 +627,25 @@ class Stm32Link:
             duration_ms = int(params["duration_ms"])
             line = "PT,{},{},{:.9g},{}\n".format(
                 sequence, mode_code, target, duration_ms
+            )
+        elif action == "profile":
+            mode = str(params.get("mode", "")).lower()
+            mode_code = {"inner": "I", "outer": "O"}.get(mode)
+            if mode_code is None:
+                raise ValueError("PID profile mode must be inner or outer")
+            amplitude = float(params["amplitude"])
+            phase_ms = int(params["phase_ms"])
+            settle_band = float(params["settle_band"])
+            settle_rate = float(params["settle_rate"])
+            settle_ms = int(params["settle_ms"])
+            line = "PP,{},{},{:.9g},{},{:.9g},{:.9g},{}\n".format(
+                sequence,
+                mode_code,
+                amplitude,
+                phase_ms,
+                settle_band,
+                settle_rate,
+                settle_ms,
             )
         elif action == "set":
             unknown = set(params) - set(PID_PARAMETER_ORDER)

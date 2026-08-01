@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import statistics
 import sys
 import time
 from urllib.error import HTTPError, URLError
@@ -12,7 +13,13 @@ from urllib.request import Request, urlopen
 from pid_auto_tuner import (
     INNER_PARAMETER_NAMES,
     OUTER_PARAMETER_NAMES,
+    ExperimentPruned,
+    PROFILE_ABORTED,
+    PROFILE_DONE,
+    ProfileEarlyStop,
     coordinate_search,
+    optuna_search,
+    score_profile,
     score_inner,
     score_outer,
 )
@@ -182,7 +189,7 @@ def _run_pid_test(base_url, mode, target, duration_s):
     return ack, samples
 
 
-def _run_pid_auto(args):
+def _run_pid_auto_legacy(args):
     initial_ack = _submit(args.url, "/pid")
     initial = dict(initial_ack.get("config", {}))
     names = (
@@ -351,6 +358,264 @@ def _run_pid_auto(args):
     return result
 
 
+def _run_pid_profile(
+    base_url,
+    stage,
+    amplitude,
+    phase_duration_s,
+    settle_band,
+    settle_rate,
+    settle_ms,
+    allow_prune=True,
+):
+    stream_request = Request(
+        base_url.rstrip("/") + "/telemetry",
+        headers={"Accept": "text/event-stream"},
+        method="GET",
+    )
+    maximum_s = 4.0 * float(phase_duration_s) + 2.0
+    samples = []
+    with urlopen(stream_request, timeout=max(8.0, maximum_s + 3.0)) as response:
+        ack = _submit(
+            base_url,
+            "/pid/profile",
+            {
+                "mode": stage,
+                "amplitude": float(amplitude),
+                "phase_ms": int(round(float(phase_duration_s) * 1000.0)),
+                "settle_band": float(settle_band),
+                "settle_rate": float(settle_rate),
+                "settle_ms": int(settle_ms),
+            },
+        )
+        sequence = int(ack["seq"])
+        early_stop = ProfileEarlyStop(stage, sequence)
+        deadline = time.monotonic() + maximum_s
+        while time.monotonic() < deadline:
+            line = response.readline()
+            if not line:
+                break
+            if not line.startswith(b"data: "):
+                continue
+            try:
+                sample = json.loads(line[6:].decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                continue
+            feedback = sample.get("feedback")
+            if (
+                not feedback
+                or feedback.get("feedback_version") != 3
+                or int(feedback.get("tuning_sequence", -1)) != sequence
+            ):
+                continue
+            samples.append(sample)
+            phase = int(feedback.get("tuning_phase", -1))
+            if phase == PROFILE_DONE:
+                return ack, samples
+            if phase == PROFILE_ABORTED:
+                raise ExperimentPruned("mcu_aborted")
+            reason = early_stop.observe(sample) if allow_prune else None
+            if reason:
+                try:
+                    _submit(base_url, "/pid/stop", timeout=3.0)
+                except Exception:
+                    pass
+                raise ExperimentPruned(reason)
+    try:
+        _submit(base_url, "/pid/stop", timeout=3.0)
+    except Exception:
+        pass
+    raise ExperimentPruned("profile_timeout")
+
+
+def _historical_pid_seeds(stage, names, limit=4):
+    runtime_dir = Path(__file__).resolve().parents[1] / "runtime"
+    candidates = []
+    patterns = (
+        "pid_auto_{}_*.json".format(stage),
+        "pid_fast_{}_*.json".format(stage),
+    )
+    for pattern in patterns:
+        for path in runtime_dir.glob(pattern):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                config = payload.get("selected_config") or payload.get(
+                    "best_config"
+                )
+                score = payload.get("selected_median_score")
+                if score is None:
+                    score = payload.get("best_score")
+                if not isinstance(config, dict) or score is None:
+                    continue
+                compact = {name: float(config[name]) for name in names}
+                candidates.append((float(score), compact, path.name))
+            except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+                continue
+    candidates.sort(key=lambda item: item[0])
+    selected = []
+    seen = set()
+    for score, config, source in candidates:
+        key = tuple(round(config[name], 8) for name in names)
+        if key in seen:
+            continue
+        seen.add(key)
+        selected.append({"score": score, "config": config, "source": source})
+        if len(selected) >= int(limit):
+            break
+    return selected
+
+
+def _run_pid_auto(args):
+    if args.engine == "coordinate":
+        return _run_pid_auto_legacy(args)
+
+    initial_ack = _submit(args.url, "/pid")
+    initial = dict(initial_ack.get("config", {}))
+    if args.stage == "inner":
+        names = (
+            INNER_PARAMETER_NAMES
+            if args.full
+            else ("inner_kp", "inner_kd")
+        )
+        settle_band = (
+            float(args.settle_band)
+            if args.settle_band is not None
+            else 0.12
+        )
+        settle_rate = (
+            float(args.settle_rate)
+            if args.settle_rate is not None
+            else 1.5
+        )
+    else:
+        names = (
+            OUTER_PARAMETER_NAMES
+            if args.full
+            else ("outer_kp", "outer_kd")
+        )
+        settle_band = (
+            float(args.settle_band)
+            if args.settle_band is not None
+            else 12.0
+        )
+        settle_rate = (
+            float(args.settle_rate)
+            if args.settle_rate is not None
+            else 30.0
+        )
+    missing = [name for name in names if name not in initial]
+    if missing:
+        raise RuntimeError("STM32 PID ACK is missing {}".format(missing))
+    historical = _historical_pid_seeds(args.stage, names)
+
+    def evaluate(config, _trial=None, allow_prune=True):
+        applied = {name: config[name] for name in names}
+        _submit(args.url, "/pid/set", {"params": applied})
+        ack, samples = _run_pid_profile(
+            args.url,
+            args.stage,
+            args.target,
+            args.duration,
+            settle_band,
+            settle_rate,
+            args.settle_ms,
+            allow_prune=allow_prune,
+        )
+        metrics = score_profile(
+            samples,
+            ack["seq"],
+            args.stage,
+            config["speed_limit"],
+            config["angle_limit"],
+        )
+        metrics["applied"] = applied
+        return metrics
+
+    started_ns = time.time_ns()
+    try:
+        result = optuna_search(
+            initial,
+            names,
+            evaluate,
+            trials=args.trials,
+            seed=args.seed,
+            seed_configs=[item["config"] for item in historical],
+        )
+        completed = [
+            trial
+            for trial in result["trials"]
+            if trial["state"] == "COMPLETE" and trial["score"] is not None
+        ]
+        completed.sort(key=lambda trial: float(trial["score"]))
+        verification = []
+        finalists = completed[: max(1, min(args.verify_top, len(completed)))]
+        for finalist in finalists:
+            config = dict(initial)
+            config.update(finalist["params"])
+            scores = []
+            runs = []
+            for _repeat in range(max(1, args.verify_repeats)):
+                metrics = evaluate(config, allow_prune=False)
+                scores.append(float(metrics["score"]))
+                runs.append(metrics)
+            verification.append(
+                {
+                    "config": config,
+                    "search_score": finalist["score"],
+                    "median_score": statistics.median(scores),
+                    "mean_score": sum(scores) / len(scores),
+                    "runs": runs,
+                }
+            )
+        verification.sort(key=lambda item: item["median_score"])
+        selected = verification[0]
+        final_ack = _submit(
+            args.url,
+            "/pid/set",
+            {"params": {name: selected["config"][name] for name in names}},
+        )
+        result.update(
+            {
+                "stage": args.stage,
+                "engine": args.engine,
+                "initial_config": initial,
+                "historical_seeds": historical,
+                "selected_config": selected["config"],
+                "selected_median_score": selected["median_score"],
+                "verification": verification,
+                "final_ack": final_ack,
+                "profile": {
+                    "amplitude": args.target,
+                    "phase_duration_s": args.duration,
+                    "settle_band": settle_band,
+                    "settle_rate": settle_rate,
+                    "settle_ms": args.settle_ms,
+                },
+                "started_epoch_ns": started_ns,
+                "completed_epoch_ns": time.time_ns(),
+            }
+        )
+    finally:
+        try:
+            _submit(args.url, "/pid/stop", timeout=3.0)
+        except Exception:
+            pass
+
+    output = (
+        Path(__file__).resolve().parents[1]
+        / "runtime"
+        / "pid_fast_{}_{}.json".format(
+            args.stage, time.strftime("%Y%m%d_%H%M%S")
+        )
+    )
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(
+        json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    result["report"] = str(output)
+    return result
+
+
 def build_parser():
     default_status_file = (
         Path(__file__).resolve().parents[1]
@@ -385,16 +650,44 @@ def build_parser():
     subparsers.add_parser("pid-reset", help="恢复本次固件源码默认参数")
     pid_test = subparsers.add_parser("pid-test", help="运行固定阶跃测试")
     pid_test.add_argument("assignments", nargs="+", metavar="名称=数值")
+    pid_profile = subparsers.add_parser(
+        "pid-profile", help="运行一次MCU定时的零/正/负/零组合实验"
+    )
+    pid_profile.add_argument(
+        "--stage", choices=("inner", "outer"), required=True
+    )
+    pid_profile.add_argument("--target", type=float)
+    pid_profile.add_argument("--duration", type=float, default=1.6)
+    pid_profile.add_argument("--settle-band", type=float)
+    pid_profile.add_argument("--settle-rate", type=float)
+    pid_profile.add_argument("--settle-ms", type=int, default=200)
+    pid_profile.add_argument("--no-prune", action="store_true")
     subparsers.add_parser("pid-stop", help="停止阶跃测试并停车")
 
     pid_auto = subparsers.add_parser(
-        "pid-auto", help="自动执行阶跃、评分和坐标搜索"
+        "pid-auto", help="自动执行MCU组合实验、流式评分和联合参数搜索"
     )
     pid_auto.add_argument(
         "--stage", choices=("inner", "outer"), required=True
     )
+    pid_auto.add_argument(
+        "--engine", choices=("fast", "coordinate"), default="fast"
+    )
     pid_auto.add_argument("--rounds", type=int, default=1)
-    pid_auto.add_argument("--duration", type=float, default=2.5)
+    pid_auto.add_argument(
+        "--duration",
+        type=float,
+        default=1.6,
+        help="maximum seconds per MCU profile phase",
+    )
+    pid_auto.add_argument("--trials", type=int, default=16)
+    pid_auto.add_argument("--seed", type=int, default=20260801)
+    pid_auto.add_argument("--full", action="store_true")
+    pid_auto.add_argument("--settle-band", type=float)
+    pid_auto.add_argument("--settle-rate", type=float)
+    pid_auto.add_argument("--settle-ms", type=int, default=200)
+    pid_auto.add_argument("--verify-top", type=int, default=2)
+    pid_auto.add_argument("--verify-repeats", type=int, default=2)
     pid_auto.add_argument(
         "--target",
         type=float,
@@ -417,7 +710,7 @@ def build_parser():
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
-    if args.command == "pid-auto" and args.target is None:
+    if args.command in ("pid-auto", "pid-profile") and args.target is None:
         args.target = 2.0 if args.stage == "inner" else 50.0
     if args.command == "status":
         try:
@@ -460,6 +753,35 @@ def main(argv=None):
         result = _submit(
             args.url, "/pid/test", _parse_pid_test(args.assignments)
         )
+    elif args.command == "pid-profile":
+        current_ack = _submit(args.url, "/pid")
+        current = current_ack.get("config", {})
+        settle_band = args.settle_band
+        settle_rate = args.settle_rate
+        if settle_band is None:
+            settle_band = 0.12 if args.stage == "inner" else 12.0
+        if settle_rate is None:
+            settle_rate = 1.5 if args.stage == "inner" else 30.0
+        ack, samples = _run_pid_profile(
+            args.url,
+            args.stage,
+            args.target,
+            args.duration,
+            settle_band,
+            settle_rate,
+            args.settle_ms,
+            allow_prune=not args.no_prune,
+        )
+        result = {
+            "ack": ack,
+            "metrics": score_profile(
+                samples,
+                ack["seq"],
+                args.stage,
+                current["speed_limit"],
+                current["angle_limit"],
+            ),
+        }
     elif args.command == "pid-stop":
         result = _submit(args.url, "/pid/stop")
     elif args.command == "pid-auto":

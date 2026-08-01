@@ -144,6 +144,16 @@ class Stm32LinkTests(unittest.TestCase):
         self.assertEqual(feedback["desired_motor_speed"], -2.5)
         self.assertEqual(feedback["tuning_mode"], 1)
 
+    def test_f3_feedback_identifies_profile_and_phase(self):
+        feedback = parse_stm32_feedback_line(
+            "F3,4,100,2,20,15,-25,35,120,0,-40,200,150,-10,"
+            "50,-250,12,5,1,0,0,4,77,2,640"
+        )
+        self.assertEqual(feedback["feedback_version"], 3)
+        self.assertEqual(feedback["tuning_sequence"], 77)
+        self.assertEqual(feedback["tuning_phase"], 2)
+        self.assertEqual(feedback["phase_elapsed_ms"], 640)
+
     def test_pid_requests_use_mask_and_ack_updates_snapshot(self):
         serial = FakeSerial()
         serial.rx_chunks.append(b"c2")
@@ -172,6 +182,25 @@ class Stm32LinkTests(unittest.TestCase):
             "30,50,0,0,0,12000"
         )
         self.assertEqual(ack["config"]["outer_ki"], 0.012)
+
+    def test_pid_profile_uses_one_compact_mcu_timed_command(self):
+        serial = FakeSerial()
+        link = Stm32Link(serial)
+        sequence = link.send_pid_request(
+            "profile",
+            {
+                "mode": "inner",
+                "amplitude": 2.0,
+                "phase_ms": 1600,
+                "settle_band": 0.12,
+                "settle_rate": 1.5,
+                "settle_ms": 160,
+            },
+        )
+        self.assertEqual(sequence, 1)
+        self.assertEqual(
+            serial.tx_lines[-1], "PP,1,I,2,1600,0.12,1.5,160\n"
+        )
 
     def test_successful_pid_ack_restores_stream_after_maix_restart(self):
         serial = FakeSerial()

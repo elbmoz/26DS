@@ -6,7 +6,7 @@
 #include <limits.h>
 
 #define BALL_VISION_LINE_LENGTH       160U
-#define BALL_VISION_FEEDBACK_LENGTH   224U
+#define BALL_VISION_FEEDBACK_LENGTH   320U
 #define BALL_VISION_STOP_TX_WAIT_MS   20U
 
 static UART_HandleTypeDef *ball_vision_huart;
@@ -388,6 +388,88 @@ HAL_StatusTypeDef BallVision_SendFeedbackV2(
             (uint32_t)feedback->motor_status) == 0U ||
         BallVision_AppendUnsignedField(&length,
             feedback->tuning_mode) == 0U ||
+        BallVision_AppendChar(&length, '\n') == 0U) {
+        ball_vision_feedback_drop_count++;
+        return HAL_ERROR;
+    }
+
+    ball_vision_feedback_tx_busy = 1U;
+    status = HAL_UART_Transmit_IT(
+        ball_vision_huart, ball_vision_feedback_tx_buffer, length);
+    if (status != HAL_OK) {
+        ball_vision_feedback_tx_busy = 0U;
+        ball_vision_feedback_drop_count++;
+        return status;
+    }
+    ball_vision_feedback_sent_count++;
+    return HAL_OK;
+}
+
+HAL_StatusTypeDef BallVision_SendFeedbackV3(
+    const BallVisionFeedbackV3 *feedback)
+{
+    const BallVisionFeedbackV2 *control;
+    HAL_StatusTypeDef status;
+    uint16_t length = 0U;
+    uint32_t sequence;
+
+    if (feedback == NULL || ball_vision_huart == NULL ||
+        ball_vision_stream_active == 0U) {
+        return HAL_ERROR;
+    }
+    control = &feedback->control;
+    sequence = ++ball_vision_feedback_attempt_count;
+    if (ball_vision_feedback_tx_busy != 0U) {
+        ball_vision_feedback_drop_count++;
+        return HAL_BUSY;
+    }
+
+    if (BallVision_AppendChar(&length, 'F') == 0U ||
+        BallVision_AppendChar(&length, '3') == 0U ||
+        BallVision_AppendUnsignedField(&length, sequence) == 0U ||
+        BallVision_AppendUnsignedField(&length, HAL_GetTick()) == 0U ||
+        BallVision_AppendUnsignedField(&length, control->vision_frame) == 0U ||
+        BallVision_AppendUnsignedField(&length,
+                                       control->vision_age_ms) == 0U ||
+        BallVision_AppendSignedField(&length,
+            BallVision_ScaleFloat(control->position, 10.0f)) == 0U ||
+        BallVision_AppendSignedField(&length,
+            BallVision_ScaleFloat(control->velocity, 10.0f)) == 0U ||
+        BallVision_AppendSignedField(&length,
+            BallVision_ScaleFloat(control->control_error, 10.0f)) == 0U ||
+        BallVision_AppendSignedField(&length,
+            BallVision_ScaleFloat(control->p_term, 100.0f)) == 0U ||
+        BallVision_AppendSignedField(&length,
+            BallVision_ScaleFloat(control->i_term, 100.0f)) == 0U ||
+        BallVision_AppendSignedField(&length,
+            BallVision_ScaleFloat(control->d_term, 100.0f)) == 0U ||
+        BallVision_AppendSignedField(&length,
+            BallVision_ScaleFloat(control->target_rod_angle, 100.0f)) == 0U ||
+        BallVision_AppendSignedField(&length,
+            BallVision_ScaleFloat(control->actual_rod_angle, 100.0f)) == 0U ||
+        BallVision_AppendSignedField(&length,
+            BallVision_ScaleFloat(control->rod_rate, 100.0f)) == 0U ||
+        BallVision_AppendSignedField(&length,
+            BallVision_ScaleFloat(control->angle_error, 100.0f)) == 0U ||
+        BallVision_AppendSignedField(&length,
+            BallVision_ScaleFloat(control->desired_speed, 100.0f)) == 0U ||
+        BallVision_AppendSignedField(&length, control->motor_command) == 0U ||
+        BallVision_AppendUnsignedField(&length,
+            control->position_age_ms) == 0U ||
+        BallVision_AppendUnsignedField(&length,
+            control->position_valid) == 0U ||
+        BallVision_AppendUnsignedField(&length,
+            control->protection_state) == 0U ||
+        BallVision_AppendUnsignedField(&length,
+            (uint32_t)control->motor_status) == 0U ||
+        BallVision_AppendUnsignedField(&length,
+            control->tuning_mode) == 0U ||
+        BallVision_AppendUnsignedField(&length,
+            feedback->tuning_sequence) == 0U ||
+        BallVision_AppendUnsignedField(&length,
+            feedback->tuning_phase) == 0U ||
+        BallVision_AppendUnsignedField(&length,
+            feedback->phase_elapsed_ms) == 0U ||
         BallVision_AppendChar(&length, '\n') == 0U) {
         ball_vision_feedback_drop_count++;
         return HAL_ERROR;

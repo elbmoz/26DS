@@ -128,6 +128,9 @@ STM32_FEEDBACK_FIELDS = (
     "position_valid",
     "protection_state",
     "tuning_mode",
+    "tuning_sequence",
+    "tuning_phase",
+    "phase_elapsed_ms",
     "raw_line",
 )
 

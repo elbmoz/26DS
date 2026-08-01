@@ -10,6 +10,7 @@ typedef enum
     BALANCE_TUNING_COMMAND_SET,
     BALANCE_TUNING_COMMAND_RESET,
     BALANCE_TUNING_COMMAND_TEST,
+    BALANCE_TUNING_COMMAND_PROFILE,
     BALANCE_TUNING_COMMAND_STOP,
     BALANCE_TUNING_COMMAND_REJECT
 } BalanceTuningCommandType;
@@ -36,7 +37,10 @@ typedef struct
     uint32_t sequence;
     uint32_t mask;
     uint32_t duration_ms;
+    uint32_t settle_ms;
     float test_target;
+    float settle_band;
+    float settle_rate;
     BalanceTuningParameters parameters;
 } BalanceTuningCommand;
 
@@ -46,10 +50,91 @@ static volatile uint8_t balance_tuning_pending_valid;
 static BallVisionTuningAck balance_tuning_ack;
 static uint8_t balance_tuning_ack_pending;
 static volatile uint8_t balance_tuning_feedback_v2;
+static volatile uint8_t balance_tuning_feedback_v3;
 static volatile uint8_t balance_tuning_mode;
 static float balance_tuning_test_target;
 static uint32_t balance_tuning_test_started_ms;
 static uint32_t balance_tuning_test_duration_ms;
+static uint32_t balance_tuning_profile_sequence;
+static volatile uint8_t balance_tuning_profile_phase;
+static uint32_t balance_tuning_profile_phase_started_ms;
+static uint32_t balance_tuning_profile_phase_duration_ms;
+static uint32_t balance_tuning_profile_settle_started_ms;
+static uint32_t balance_tuning_profile_settle_ms;
+static float balance_tuning_profile_amplitude;
+static float balance_tuning_profile_settle_band;
+static float balance_tuning_profile_settle_rate;
+
+static float BalanceTuning_AbsFloat(float value)
+{
+    return (value < 0.0f) ? -value : value;
+}
+
+static uint8_t BalanceTuning_ProfileActive(void)
+{
+    return (balance_tuning_mode == BALANCE_TUNING_MODE_INNER_PROFILE ||
+            balance_tuning_mode == BALANCE_TUNING_MODE_OUTER_PROFILE) ?
+        1U : 0U;
+}
+
+static float BalanceTuning_ProfileTarget(uint8_t phase)
+{
+    if (phase == BALANCE_TUNING_PHASE_POSITIVE) {
+        return balance_tuning_profile_amplitude;
+    }
+    if (phase == BALANCE_TUNING_PHASE_NEGATIVE) {
+        return -balance_tuning_profile_amplitude;
+    }
+    return 0.0f;
+}
+
+static uint8_t BalanceTuning_ProfileIsSettled(void)
+{
+    float error;
+    float rate;
+
+    if (balance_tuning_mode == BALANCE_TUNING_MODE_INNER_PROFILE) {
+        if (balance_control_state.motor_position_valid == 0U) {
+            return 0U;
+        }
+        error = balance_control_state.angle_error_deg;
+        rate = balance_control_state.rod_rate_deg_s;
+    } else if (balance_tuning_mode ==
+               BALANCE_TUNING_MODE_OUTER_PROFILE) {
+        if (balance_control_state.vision_valid == 0U ||
+            balance_control_state.motor_position_valid == 0U) {
+            return 0U;
+        }
+        error = balance_control_state.position_error;
+        rate = balance_control_state.ball_velocity;
+    } else {
+        return 0U;
+    }
+
+    return (BalanceTuning_AbsFloat(error) <=
+                balance_tuning_profile_settle_band &&
+            BalanceTuning_AbsFloat(rate) <=
+                balance_tuning_profile_settle_rate) ? 1U : 0U;
+}
+
+static uint8_t BalanceTuning_AdvanceProfile(uint32_t now_ms)
+{
+    if (balance_tuning_profile_phase < BALANCE_TUNING_PHASE_RETURN) {
+        balance_tuning_profile_phase++;
+        balance_tuning_test_target = BalanceTuning_ProfileTarget(
+            balance_tuning_profile_phase);
+        balance_tuning_profile_phase_started_ms = now_ms;
+        balance_tuning_profile_settle_started_ms = 0U;
+        return BALANCE_TUNING_ACTION_RESET;
+    }
+
+    balance_tuning_profile_phase = BALANCE_TUNING_PHASE_DONE;
+    balance_tuning_mode = BALANCE_TUNING_MODE_PAUSED;
+    balance_tuning_test_target = 0.0f;
+    balance_tuning_test_duration_ms = 0U;
+    balance_tuning_profile_settle_started_ms = 0U;
+    return BALANCE_TUNING_ACTION_STOP;
+}
 
 static void BalanceTuning_ReadCurrent(BalanceTuningParameters *parameters)
 {
@@ -236,20 +321,36 @@ void BalanceTuning_Init(void)
     balance_tuning_pending_valid = 0U;
     balance_tuning_ack_pending = 0U;
     balance_tuning_feedback_v2 = 0U;
+    balance_tuning_feedback_v3 = 0U;
     balance_tuning_mode = BALANCE_TUNING_MODE_NORMAL;
     balance_tuning_test_target = 0.0f;
     balance_tuning_test_started_ms = 0U;
     balance_tuning_test_duration_ms = 0U;
+    balance_tuning_profile_sequence = 0U;
+    balance_tuning_profile_phase = BALANCE_TUNING_PHASE_DONE;
+    balance_tuning_profile_phase_started_ms = 0U;
+    balance_tuning_profile_phase_duration_ms = 0U;
+    balance_tuning_profile_settle_started_ms = 0U;
+    balance_tuning_profile_settle_ms = 0U;
+    balance_tuning_profile_amplitude = 0.0f;
+    balance_tuning_profile_settle_band = 0.0f;
+    balance_tuning_profile_settle_rate = 0.0f;
 }
 
 void BalanceTuning_OnControllerStart(void)
 {
     balance_tuning_pending_valid = 0U;
     balance_tuning_ack_pending = 0U;
+    balance_tuning_feedback_v3 = 0U;
     balance_tuning_mode = BALANCE_TUNING_MODE_NORMAL;
     balance_tuning_test_target = 0.0f;
     balance_tuning_test_started_ms = 0U;
     balance_tuning_test_duration_ms = 0U;
+    balance_tuning_profile_sequence = 0U;
+    balance_tuning_profile_phase = BALANCE_TUNING_PHASE_DONE;
+    balance_tuning_profile_phase_started_ms = 0U;
+    balance_tuning_profile_phase_duration_ms = 0U;
+    balance_tuning_profile_settle_started_ms = 0U;
 }
 
 uint8_t BalanceTuning_ProcessLineFromISR(const char *line)
@@ -269,6 +370,8 @@ uint8_t BalanceTuning_ProcessLineFromISR(const char *line)
         command.type = BALANCE_TUNING_COMMAND_RESET;
     } else if (line[1] == 'T') {
         command.type = BALANCE_TUNING_COMMAND_TEST;
+    } else if (line[1] == 'P') {
+        command.type = BALANCE_TUNING_COMMAND_PROFILE;
     } else if (line[1] == 'X') {
         command.type = BALANCE_TUNING_COMMAND_STOP;
     } else {
@@ -292,25 +395,57 @@ uint8_t BalanceTuning_ProcessLineFromISR(const char *line)
             command.type = BALANCE_TUNING_COMMAND_REJECT;
             command.status = 1U;
         }
-    } else if (command.type == BALANCE_TUNING_COMMAND_TEST) {
+    } else if (command.type == BALANCE_TUNING_COMMAND_TEST ||
+               command.type == BALANCE_TUNING_COMMAND_PROFILE) {
         if (BalanceTuning_ParseComma(&text) == 0U ||
             (*text != 'I' && *text != 'O')) {
             command.type = BALANCE_TUNING_COMMAND_REJECT;
             command.status = 1U;
         } else {
-            command.test_mode = (*text == 'I') ?
-                BALANCE_TUNING_MODE_INNER_STEP :
-                BALANCE_TUNING_MODE_OUTER_STEP;
+            if (command.type == BALANCE_TUNING_COMMAND_PROFILE) {
+                command.test_mode = (*text == 'I') ?
+                    BALANCE_TUNING_MODE_INNER_PROFILE :
+                    BALANCE_TUNING_MODE_OUTER_PROFILE;
+            } else {
+                command.test_mode = (*text == 'I') ?
+                    BALANCE_TUNING_MODE_INNER_STEP :
+                    BALANCE_TUNING_MODE_OUTER_STEP;
+            }
             text++;
             if (BalanceTuning_ParseComma(&text) == 0U ||
                 BalanceTuning_ParseFloat(&text, &command.test_target) == 0U ||
                 BalanceTuning_ParseComma(&text) == 0U ||
                 BalanceTuning_ParseUnsigned(&text, &command.duration_ms) == 0U ||
-                *text != '\0' || command.duration_ms < 200U ||
+                command.duration_ms < 200U ||
                 command.duration_ms > 15000U) {
                 command.type = BALANCE_TUNING_COMMAND_REJECT;
                 command.status = 1U;
-            } else if (command.test_mode == BALANCE_TUNING_MODE_INNER_STEP &&
+            } else if (command.type == BALANCE_TUNING_COMMAND_PROFILE &&
+                       (BalanceTuning_ParseComma(&text) == 0U ||
+                        BalanceTuning_ParseFloat(
+                            &text, &command.settle_band) == 0U ||
+                        BalanceTuning_ParseComma(&text) == 0U ||
+                        BalanceTuning_ParseFloat(
+                            &text, &command.settle_rate) == 0U ||
+                        BalanceTuning_ParseComma(&text) == 0U ||
+                        BalanceTuning_ParseUnsigned(
+                            &text, &command.settle_ms) == 0U ||
+                        *text != '\0' || command.test_target <= 0.0f ||
+                        command.settle_band <= 0.0f ||
+                        command.settle_rate <= 0.0f ||
+                        command.settle_ms < 40U ||
+                        command.settle_ms > 1000U ||
+                        command.settle_ms > command.duration_ms)) {
+                command.type = BALANCE_TUNING_COMMAND_REJECT;
+                command.status = 1U;
+            } else if (command.type == BALANCE_TUNING_COMMAND_TEST &&
+                       *text != '\0') {
+                command.type = BALANCE_TUNING_COMMAND_REJECT;
+                command.status = 1U;
+            } else if ((command.test_mode ==
+                            BALANCE_TUNING_MODE_INNER_STEP ||
+                        command.test_mode ==
+                            BALANCE_TUNING_MODE_INNER_PROFILE) &&
                        (command.test_target <
                             -balance_control_config.outer_angle_limit_deg ||
                         command.test_target >
@@ -327,6 +462,8 @@ uint8_t BalanceTuning_ProcessLineFromISR(const char *line)
     balance_tuning_pending = command;
     balance_tuning_pending_valid = 1U;
     balance_tuning_feedback_v2 = 1U;
+    balance_tuning_feedback_v3 =
+        (command.type == BALANCE_TUNING_COMMAND_PROFILE) ? 1U : 0U;
     return 1U;
 }
 
@@ -334,12 +471,12 @@ uint8_t BalanceTuning_ApplyPendingAtControlBoundary(uint32_t now_ms)
 {
     BalanceTuningCommand command;
     uint32_t primask;
-    uint8_t action = 0U;
+    uint8_t action;
 
-    BalanceTuning_Update(now_ms);
+    action = BalanceTuning_Update(now_ms);
     BalanceTuning_FlushAck();
     if (balance_tuning_pending_valid == 0U) {
-        return 0U;
+        return action;
     }
 
     primask = __get_PRIMASK();
@@ -352,30 +489,71 @@ uint8_t BalanceTuning_ApplyPendingAtControlBoundary(uint32_t now_ms)
 
     if (command.type == BALANCE_TUNING_COMMAND_SET) {
         BalanceTuning_WriteCurrent(&command.parameters);
-        action = BALANCE_TUNING_ACTION_RESET | BALANCE_TUNING_ACTION_STOP;
+        action |= BALANCE_TUNING_ACTION_RESET | BALANCE_TUNING_ACTION_STOP;
     } else if (command.type == BALANCE_TUNING_COMMAND_RESET) {
         BalanceTuning_WriteCurrent(&balance_tuning_defaults);
         balance_tuning_mode = BALANCE_TUNING_MODE_NORMAL;
-        action = BALANCE_TUNING_ACTION_RESET | BALANCE_TUNING_ACTION_STOP;
+        action |= BALANCE_TUNING_ACTION_RESET | BALANCE_TUNING_ACTION_STOP;
     } else if (command.type == BALANCE_TUNING_COMMAND_TEST) {
         balance_tuning_mode = command.test_mode;
         balance_tuning_test_target = command.test_target;
         balance_tuning_test_started_ms = now_ms;
         balance_tuning_test_duration_ms = command.duration_ms;
-        action = BALANCE_TUNING_ACTION_RESET | BALANCE_TUNING_ACTION_STOP;
+        balance_tuning_profile_phase = BALANCE_TUNING_PHASE_DONE;
+        action |= BALANCE_TUNING_ACTION_RESET | BALANCE_TUNING_ACTION_STOP;
+    } else if (command.type == BALANCE_TUNING_COMMAND_PROFILE) {
+        balance_tuning_mode = command.test_mode;
+        balance_tuning_test_target = 0.0f;
+        balance_tuning_test_started_ms = now_ms;
+        balance_tuning_test_duration_ms = command.duration_ms * 4U;
+        balance_tuning_profile_sequence = command.sequence;
+        balance_tuning_profile_phase = BALANCE_TUNING_PHASE_PREPARE;
+        balance_tuning_profile_phase_started_ms = now_ms;
+        balance_tuning_profile_phase_duration_ms = command.duration_ms;
+        balance_tuning_profile_settle_started_ms = 0U;
+        balance_tuning_profile_settle_ms = command.settle_ms;
+        balance_tuning_profile_amplitude = command.test_target;
+        balance_tuning_profile_settle_band = command.settle_band;
+        balance_tuning_profile_settle_rate = command.settle_rate;
+        action |= BALANCE_TUNING_ACTION_RESET | BALANCE_TUNING_ACTION_STOP;
     } else if (command.type == BALANCE_TUNING_COMMAND_STOP) {
+        if (BalanceTuning_ProfileActive() != 0U) {
+            balance_tuning_profile_phase = BALANCE_TUNING_PHASE_ABORTED;
+        }
         balance_tuning_mode = BALANCE_TUNING_MODE_PAUSED;
         balance_tuning_test_target = 0.0f;
         balance_tuning_test_duration_ms = 0U;
-        action = BALANCE_TUNING_ACTION_STOP;
+        action |= BALANCE_TUNING_ACTION_STOP;
     }
 
     BalanceTuning_QueueAck(command.sequence, command.status);
     return action;
 }
 
-void BalanceTuning_Update(uint32_t now_ms)
+uint8_t BalanceTuning_Update(uint32_t now_ms)
 {
+    uint32_t phase_elapsed;
+
+    if (BalanceTuning_ProfileActive() != 0U) {
+        phase_elapsed = (uint32_t)(
+            now_ms - balance_tuning_profile_phase_started_ms);
+        if (BalanceTuning_ProfileIsSettled() != 0U) {
+            if (balance_tuning_profile_settle_started_ms == 0U) {
+                balance_tuning_profile_settle_started_ms = now_ms;
+            } else if ((uint32_t)(
+                           now_ms - balance_tuning_profile_settle_started_ms) >=
+                       balance_tuning_profile_settle_ms) {
+                return BalanceTuning_AdvanceProfile(now_ms);
+            }
+        } else {
+            balance_tuning_profile_settle_started_ms = 0U;
+        }
+        if (phase_elapsed >= balance_tuning_profile_phase_duration_ms) {
+            return BalanceTuning_AdvanceProfile(now_ms);
+        }
+        return 0U;
+    }
+
     if ((balance_tuning_mode == BALANCE_TUNING_MODE_INNER_STEP ||
          balance_tuning_mode == BALANCE_TUNING_MODE_OUTER_STEP) &&
         (uint32_t)(now_ms - balance_tuning_test_started_ms) >=
@@ -383,7 +561,9 @@ void BalanceTuning_Update(uint32_t now_ms)
         balance_tuning_mode = BALANCE_TUNING_MODE_PAUSED;
         balance_tuning_test_target = 0.0f;
         balance_tuning_test_duration_ms = 0U;
+        return BALANCE_TUNING_ACTION_STOP;
     }
+    return 0U;
 }
 
 void BalanceTuning_FlushAck(void)
@@ -399,9 +579,15 @@ uint8_t BalanceTuning_FeedbackV2Enabled(void)
     return balance_tuning_feedback_v2;
 }
 
+uint8_t BalanceTuning_FeedbackV3Enabled(void)
+{
+    return balance_tuning_feedback_v3;
+}
+
 uint8_t BalanceTuning_GetInnerTarget(float *target_angle_deg)
 {
-    if (balance_tuning_mode != BALANCE_TUNING_MODE_INNER_STEP ||
+    if ((balance_tuning_mode != BALANCE_TUNING_MODE_INNER_STEP &&
+         balance_tuning_mode != BALANCE_TUNING_MODE_INNER_PROFILE) ||
         target_angle_deg == NULL) {
         return 0U;
     }
@@ -411,7 +597,8 @@ uint8_t BalanceTuning_GetInnerTarget(float *target_angle_deg)
 
 uint8_t BalanceTuning_GetOuterTarget(float *target_position_px)
 {
-    if (balance_tuning_mode != BALANCE_TUNING_MODE_OUTER_STEP ||
+    if ((balance_tuning_mode != BALANCE_TUNING_MODE_OUTER_STEP &&
+         balance_tuning_mode != BALANCE_TUNING_MODE_OUTER_PROFILE) ||
         target_position_px == NULL) {
         return 0U;
     }
@@ -437,6 +624,18 @@ float BalanceTuning_GetTestTarget(void)
 uint32_t BalanceTuning_GetRemainingMs(uint32_t now_ms)
 {
     uint32_t elapsed;
+    uint32_t remaining_phases;
+
+    if (BalanceTuning_ProfileActive() != 0U) {
+        elapsed = (uint32_t)(
+            now_ms - balance_tuning_profile_phase_started_ms);
+        remaining_phases = (uint32_t)(
+            BALANCE_TUNING_PHASE_RETURN - balance_tuning_profile_phase);
+        return ((elapsed < balance_tuning_profile_phase_duration_ms) ?
+                    (balance_tuning_profile_phase_duration_ms - elapsed) :
+                    0U) +
+               remaining_phases * balance_tuning_profile_phase_duration_ms;
+    }
 
     if (balance_tuning_mode != BALANCE_TUNING_MODE_INNER_STEP &&
         balance_tuning_mode != BALANCE_TUNING_MODE_OUTER_STEP) {
@@ -445,4 +644,24 @@ uint32_t BalanceTuning_GetRemainingMs(uint32_t now_ms)
     elapsed = (uint32_t)(now_ms - balance_tuning_test_started_ms);
     return (elapsed < balance_tuning_test_duration_ms) ?
         (balance_tuning_test_duration_ms - elapsed) : 0U;
+}
+
+uint32_t BalanceTuning_GetProfileSequence(void)
+{
+    return balance_tuning_profile_sequence;
+}
+
+uint8_t BalanceTuning_GetProfilePhase(void)
+{
+    return balance_tuning_profile_phase;
+}
+
+uint32_t BalanceTuning_GetProfilePhaseElapsedMs(uint32_t now_ms)
+{
+    if (balance_tuning_profile_phase_started_ms == 0U ||
+        balance_tuning_profile_phase == BALANCE_TUNING_PHASE_DONE ||
+        balance_tuning_profile_phase == BALANCE_TUNING_PHASE_ABORTED) {
+        return 0U;
+    }
+    return (uint32_t)(now_ms - balance_tuning_profile_phase_started_ms);
 }
